@@ -20,8 +20,9 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 const ID = 'kenari-usage'
 
 // Usage routes are rate-limited (60/min/account across all three) and the
-// figures move slowly — a 5-minute poll is plenty, with click-to-refresh.
-const POLL_MS = 5 * 60 * 1000
+// figures move slowly — a 2-minute poll keeps the chip current without
+// hammering the account limit, and a click refreshes immediately.
+const POLL_MS = 2 * 60 * 1000
 
 function pct(value) {
   if (typeof value !== 'number' || !isFinite(value)) return null
