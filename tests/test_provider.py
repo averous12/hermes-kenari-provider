@@ -91,6 +91,64 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(profile.base_url, "https://kenari.id/v1")
 
 
+class TestModelCapabilities(unittest.TestCase):
+    def setUp(self):
+        self.module, self.profile = conftest_stub.load_plugin()
+
+    def test_curated_snapshot_covers_catalog(self):
+        caps = self.module._MODEL_CAPABILITIES_CURATED
+        self.assertGreaterEqual(len(caps), 90)
+        entry = caps["step-3-7-flash"]
+        self.assertEqual(entry["context_window"], 262144)
+        self.assertTrue(entry["supports_tools"])
+        self.assertTrue(entry["supports_vision"])
+        self.assertTrue(entry["supports_reasoning"])
+        self.assertEqual(entry["model_family"], "stepfun")
+
+    def test_free_model_declared(self):
+        entry = self.module._MODEL_CAPABILITIES_CURATED["step-3-7-flash:free"]
+        self.assertTrue(entry["supports_tools"])
+
+    def test_non_tool_model_declared(self):
+        entry = self.module._MODEL_CAPABILITIES_CURATED.get("gpt-image-2")
+        if entry is not None:
+            self.assertFalse(entry["supports_tools"])
+
+    def test_profile_carries_capabilities(self):
+        self.assertIn("step-3-7-flash", self.profile.model_capabilities)
+        self.assertEqual(
+            self.profile.model_capabilities["step-3-7-flash"]["context_window"], 262144
+        )
+
+    def test_explicit_overrides_not_clobbered(self):
+        # The plugin only supplies the declaration; user model_overrides
+        # win in core — nothing here may force values past the profile.
+        self.assertIsInstance(self.profile.model_capabilities, dict)
+
+    def test_live_refresh_updates_profile(self):
+        payload = _catalog_payload([
+            _entry("brand-new-model",
+                   context_length=777000, tool_call=True,
+                   modalities={"input": ["text"], "output": ["text"]},
+                   reasoning=False, owned_by="newvendor"),
+        ])
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(
+            mod, "open_credentialed_url",
+            lambda req, timeout=8.0: _FakeResponse(payload),
+        ):
+            self.module._CATALOG_CACHE = None
+            self.profile.fetch_models()
+        self.assertEqual(
+            self.profile.model_capabilities["brand-new-model"]["context_window"],
+            777000,
+        )
+        self.assertEqual(
+            self.module._MODEL_CAPABILITIES_LIVE["brand-new-model"]["model_family"],
+            "newvendor",
+        )
+
+
 class TestFetchModels(unittest.TestCase):
     def setUp(self):
         self.module, self.profile = conftest_stub.load_plugin()

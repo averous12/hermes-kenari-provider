@@ -50,6 +50,7 @@ class StubProviderProfile:
     default_max_tokens: int | None = None
     default_aux_model: str = ""
     model_aliases: dict = field(default_factory=dict)
+    model_capabilities: dict = field(default_factory=dict)
 
     def fetch_models(
         self,

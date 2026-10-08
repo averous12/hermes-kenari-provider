@@ -115,6 +115,746 @@ _MODEL_META: dict[str, dict[str, Any]] = {}
 # scope filter is applied on top per call, with its own cache.
 _CATALOG_CACHE: list[str] | None = None
 
+# Live per-model capabilities in the canonical model_overrides schema,
+# refreshed from the catalog on every successful fetch. Merged OVER the
+# curated table below (live wins on conflict), so catalog changes land
+# without a plugin update. Read by _model_capabilities_merged().
+_MODEL_CAPABILITIES_LIVE: dict[str, dict[str, Any]] = {}
+
+
+def _model_capabilities_merged() -> dict[str, dict[str, Any]]:
+    """Curated capabilities patched with the live-catalog refresh."""
+    merged = dict(_MODEL_CAPABILITIES_CURATED)
+    for model_id, caps in _MODEL_CAPABILITIES_LIVE.items():
+        base = dict(merged.get(model_id, {}))
+        base.update(caps)
+        merged[model_id] = base
+    return merged
+
+
+def _caps_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Canonical capability entry from one ``/v1/models`` item."""
+    inputs = ((entry.get("modalities") or {}).get("input")) or []
+    caps: dict[str, Any] = {
+        "context_window": entry.get("context_length") or 200000,
+        "supports_tools": entry.get("tool_call") is True,
+        "supports_vision": "image" in inputs,
+        "supports_reasoning": entry.get("reasoning") is True,
+    }
+    family = (entry.get("owned_by") or "").strip()
+    if family:
+        caps["model_family"] = family
+    return caps
+
+# Curated per-model capabilities (canonical model_overrides schema),
+# generated from the live GET /v1/models catalog. This is the OFFLINE
+# fallback: fetch_models() refreshes _MODEL_CAPABILITIES_LIVE from the
+# live catalog on every successful fetch, so new/changed models are
+# picked up without a plugin update. Explicit user model_overrides
+# still win over both (core precedence).
+_MODEL_CAPABILITIES_CURATED: dict[str, dict[str, object]] = {
+        'agnes-2-0-flash:free': {
+            "context_window": 256000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'agnes',
+        },
+        'agnes-2-5-flash:free': {
+            "context_window": 512000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'agnes',
+        },
+        'agnes-3-0-flash:free': {
+            "context_window": 512000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'agnes',
+        },
+        'claude-fable-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-haiku-5-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-opus-4-7': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-opus-4-8': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-opus-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-opus-5-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-sonnet-4-6': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-sonnet-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'claude-sonnet-5-5': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'anthropic',
+        },
+        'deepseek-v4-1-flash': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'deepseek',
+        },
+        'deepseek-v4-flash': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'deepseek',
+        },
+        'deepseek-v4-pro': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'deepseek',
+        },
+        'gemini-3-1-flash-lite': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'gemini-3-1-flash-tts': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'gemini-3-1-pro': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'gemini-3-6-flash': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'gemini-3-7-flash': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'gemini-3-8-flash': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'gemini-omni-flash': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'gemma-4-31b-it': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'glm-5-2': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'z-ai',
+        },
+        'glm-5-3': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'z-ai',
+        },
+        'glm-5-3-flash': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'z-ai',
+        },
+        'gpt-5-4': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-5-4-mini': {
+            "context_window": 272000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-5-5': {
+            "context_window": 272000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-5-6-luna': {
+            "context_window": 872000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-5-6-sol': {
+            "context_window": 872000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-5-6-terra': {
+            "context_window": 872000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-6-1-sol': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-6-astra': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-6-luna': {
+            "context_window": 872000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-6-sol': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-image-2': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'openai',
+        },
+        'gpt-image-2-5-flare': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'openai',
+        },
+        'gpt-image-2-5-sunburst': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'openai',
+        },
+        'gpt-oss-120b': {
+            "context_window": 128000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'gpt-oss-20b': {
+            "context_window": 128000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'openai',
+        },
+        'grok-4-5': {
+            "context_window": 500000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'x-ai',
+        },
+        'grok-4-6': {
+            "context_window": 500000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'x-ai',
+        },
+        'grok-4-7': {
+            "context_window": 500000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'x-ai',
+        },
+        'grok-imagine-image': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'x-ai',
+        },
+        'grok-imagine-image-2-0': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'x-ai',
+        },
+        'grok-imagine-image-quality': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'x-ai',
+        },
+        'hunyuan-image-alpha': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'tencent',
+        },
+        'hunyuan-image-v2.0': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'tencent',
+        },
+        'hunyuan-image-v3.0': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'tencent',
+        },
+        'hunyuan-image-v3.0-art': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'tencent',
+        },
+        'hunyuan-video-art': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'tencent',
+        },
+        'hy3': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'tencent',
+        },
+        'hy3:free': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'tencent',
+        },
+        'hy4-preview': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'tencent',
+        },
+        'kimi-k2-6': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'moonshotai',
+        },
+        'kimi-k2-7-code': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'moonshotai',
+        },
+        'kimi-k3': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'moonshotai',
+        },
+        'kling-v3': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'kuaishou',
+        },
+        'kling-video-v3': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'kuaishou',
+        },
+        'kokoro-tts': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'kokoro',
+        },
+        'laguna-s-2-1:free': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'poolside',
+        },
+        'laguna-xs-2-1:free': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'poolside',
+        },
+        'mimo-v2-5': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'xiaomi',
+        },
+        'mimo-v2-5-pro': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'xiaomi',
+        },
+        'mimo-v2-5-tts': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'xiaomi',
+        },
+        'mimo-v2-6-flash': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'xiaomi',
+        },
+        'mimo-v2-6-flash:free': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'xiaomi',
+        },
+        'mimo-v2-6-pro': {
+            "context_window": 1050000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'xiaomi',
+        },
+        'minimax-m2-7': {
+            "context_window": 204800,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'minimax',
+        },
+        'minimax-m2-7-highspeed': {
+            "context_window": 204800,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'minimax',
+        },
+        'minimax-m3': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'minimax',
+        },
+        'minimax-speech-2-8-hd': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'minimax',
+        },
+        'minimax-speech-2-8-turbo': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'minimax',
+        },
+        'muse-spark-1-2': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'meta',
+        },
+        'muse-spark-1-2-contributor': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'meta',
+        },
+        'muse-spark-1-3': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'meta',
+        },
+        'muse-spark-1-3-contributor': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'meta',
+        },
+        'muse-spark-1-3-contributor:free': {
+            "context_window": 1048576,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'meta',
+        },
+        'nano-banana': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'nano-banana-2': {
+            "context_window": 131072,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'google',
+        },
+        'nano-banana-2-1': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'nano-banana-2-lite': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'nano-banana-pro': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'nemotron-3-super-120b-a12b': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'nvidia',
+        },
+        'nemotron-3-super-120b-a12b:free': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'nvidia',
+        },
+        'nemotron-3-ultra-550b-a55b': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'nvidia',
+        },
+        'nemotron-3-ultra-550b-a55b:free': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'nvidia',
+        },
+        'north-mini-code:free': {
+            "context_window": 256000,
+            "supports_tools": True,
+            "supports_vision": False,
+            "supports_reasoning": True,
+            "model_family": 'cohere',
+        },
+        'qwen3-7-plus': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'qwen',
+        },
+        'qwen3-8-flash': {
+            "context_window": 1000000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'qwen',
+        },
+        'qwen3-8-max': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'qwen',
+        },
+        'seedance-2.0': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'bytedance',
+        },
+        'seedance-2.0-fast': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'bytedance',
+        },
+        'seedance-2.5': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'bytedance',
+        },
+        'space-bunny-alpha:free': {
+            "context_window": 1000000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'stealth',
+        },
+        'step-3-7-flash': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'stepfun',
+        },
+        'step-3-7-flash:free': {
+            "context_window": 262144,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supports_reasoning": True,
+            "model_family": 'stepfun',
+        },
+        'veo-3.1-lite': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": True,
+            "supports_reasoning": False,
+            "model_family": 'google',
+        },
+        'whisper-large-v3-turbo': {
+            "context_window": 200000,
+            "supports_tools": False,
+            "supports_vision": False,
+            "supports_reasoning": False,
+            "model_family": 'openai',
+        },}
+
+
 # (sha256(key)[:16], base_url) -> frozenset | None. None means the key
 # is unrestricted (or the probe was inconclusive) — no filtering.
 _KEY_ALLOW_CACHE: dict[tuple[str, str], frozenset[str] | None] = {}
@@ -455,6 +1195,11 @@ class KenariProfile(ProviderProfile):
             model_id = entry.get("id")
             if not isinstance(model_id, str) or not model_id or model_id in seen:
                 continue
+            # Capabilities route through agent.models_dev for EVERY model
+            # the gateway serves (chat or not), so image/video/audio
+            # routes and non-tool chat models get correct metadata too —
+            # no manual model_overrides needed for Kenari ids.
+            _MODEL_CAPABILITIES_LIVE[model_id] = _caps_from_entry(entry)
             endpoints = entry.get("endpoints") or []
             if "chat" not in endpoints:
                 continue
@@ -891,8 +1636,37 @@ PROFILE_FIELDS: dict[str, Any] = {
         "step-3-7-flash:free",
         "muse-spark-1-3-contributor:free",
     ),
+    # Per-model capabilities in the canonical model_overrides schema, so
+    # Hermes routes Kenari ids correctly (context windows, vision, tool
+    # and reasoning badges, image routing) without models.dev knowing
+    # them and without manual user overrides. Curated snapshot at
+    # import; refreshed in place from the live catalog on every fetch.
+    "model_capabilities": _model_capabilities_merged(),
 }
 
 kenari = KenariProfile(**_supported_kwargs(KenariProfile, PROFILE_FIELDS))
+
+# Keep the registered profile's capabilities live: fetch_models() runs
+# on an already-built profile object, so refresh its model_capabilities
+# dict in place (same object the core holds) after each catalog fetch.
+# The curated snapshot above covers the offline case.
+_orig_fetch_agentic_catalog = KenariProfile._fetch_agentic_catalog
+
+
+def _fetch_agentic_catalog_live_caps(self, *, timeout: float):
+    models = _orig_fetch_agentic_catalog(self, timeout=timeout)
+    if _MODEL_CAPABILITIES_LIVE:
+        try:
+            self.model_capabilities.update(_MODEL_CAPABILITIES_LIVE)
+        except Exception:
+            pass
+    return models
+
+
+KenariProfile._fetch_agentic_catalog = _fetch_agentic_catalog_live_caps
+try:
+    kenari.model_capabilities.update(_model_capabilities_merged())
+except Exception:
+    pass  # legacy base without the field: registration still succeeds
 
 register_provider(kenari)
