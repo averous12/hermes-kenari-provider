@@ -1,0 +1,5 @@
+name: kenari
+kind: model-provider
+version: 0.1.0
+description: Kenari.id — Indonesian AI gateway (OpenAI-compatible, IDR billing)
+author: avero

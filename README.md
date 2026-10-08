@@ -62,7 +62,7 @@ This repo ships **two independent plugins**. Install either or both.
 
 | Folder | What it is | Install into |
 |---|---|---|
-| `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/model-providers/kenari` |
+| repo root + `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/kenari` |
 | `kenari-usage/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-usage` |
 
 They are separate because Hermes loads them through different registries:
@@ -73,16 +73,34 @@ the desktop-half copier and the dashboard backend only scan the **flat**
 snapshot, so **the provider must be installed for the chip to have data** —
 but the provider works fine on its own.
 
-### Provider (`kenari/`)
+### Provider — one command
 
 ```bash
-# From git — the subdirectory goes in the identifier (there is no --subdir flag):
+hermes plugins install averous12/hermes-kenari-provider
+```
+
+That's it. (The repo root carries the provider manifest plus a small
+`__init__.py` that loads the profile from `kenari/`.)
+
+### Desktop chip — one command
+
+```bash
+hermes plugins install averous12/hermes-kenari-provider/kenari-usage
+```
+
+Then restart the desktop app (it copies `desktop/plugin.js` into
+`desktop-plugins/` on launch) and enable the chip under
+**Capabilities → Plugins → Kenari Usage**.
+
+### Equivalent forms
+
+```bash
+# Provider, naming the subdirectory explicitly (keeps the plugin dir minimal):
 hermes plugins install averous12/hermes-kenari-provider/kenari
-# equivalent forms:
 hermes plugins install averous12/hermes-kenari-provider#kenari
 hermes plugins install https://github.com/averous12/hermes-kenari-provider.git/kenari
 
-# Or as a pip package (entry point `hermes_agent.plugins`):
+# As a pip package (entry point `hermes_agent.plugins`):
 pip install git+https://github.com/averous12/hermes-kenari-provider.git
 ```
 
