@@ -8,9 +8,10 @@ Chat Completions endpoint (`https://kenari.id/v1`), filters the `/model`
 picker to tool-capable chat routes the configured key may actually call,
 maps reasoning effort onto Kenari's `reasoning` object, prices responses
 in Rupiah from the live catalog, and surfaces wallet/plan/usage via
-`hermes usage`. It touches no Hermes core files — discovery, credential
-resolution, `hermes doctor`, and the `--provider` flag all auto-wire from
-the provider registry.
+`hermes usage`. It ships with a companion desktop plugin
+(`kenari-usage/`) that shows plan quota in the statusbar. It touches no
+Hermes core files — discovery, credential resolution, `hermes doctor`,
+and the `--provider` flag all auto-wire from the provider registry.
 
 ## What it does
 
@@ -57,22 +58,61 @@ the provider registry.
 
 ## Install
 
-```bash
-# From git (user plugin dir — overrides nothing, adds the kenari provider):
-git clone https://github.com/avero/hermes-provider-kenari \
-  ~/.hermes/plugins/model-providers/kenari-tmp
-# ...or straight from a URL:
-hermes plugins install https://github.com/avero/hermes-provider-kenari --subdir kenari
+This repo ships **two independent plugins**. Install either or both.
 
-# As a pip package (picked up via the hermes_agent.plugins entry point):
-pip install git+https://github.com/avero/hermes-provider-kenari.git
+| Folder | What it is | Install into |
+|---|---|---|
+| `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/model-providers/kenari` |
+| `kenari-usage/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-usage` |
+
+They are separate because Hermes loads them through different registries:
+model providers load from `plugins/model-providers/` (or the flat
+`plugins/<name>/` when the manifest declares `kind: model-provider`), while
+the desktop-half copier and the dashboard backend only scan the **flat**
+`plugins/<name>/` root. The chip's backend reuses the provider's usage
+snapshot, so **the provider must be installed for the chip to have data** —
+but the provider works fine on its own.
+
+### Provider (`kenari/`)
+
+```bash
+# From git — the subdirectory goes in the identifier (there is no --subdir flag):
+hermes plugins install averous12/hermes-kenari-provider/kenari
+# equivalent forms:
+hermes plugins install averous12/hermes-kenari-provider#kenari
+hermes plugins install https://github.com/averous12/hermes-kenari-provider.git/kenari
+
+# Or as a pip package (entry point `hermes_agent.plugins`):
+pip install git+https://github.com/averous12/hermes-kenari-provider.git
 ```
 
-Verify it's registered:
+### Desktop chip (`kenari-usage/`)
 
 ```bash
-hermes plugins list          # should show `kenari`, enabled
+hermes plugins install averous12/hermes-kenari-provider/kenari-usage
+# or:
+hermes plugins install averous12/hermes-kenari-provider#kenari-usage
+```
+
+Then restart the desktop app (it copies `desktop/plugin.js` into
+`desktop-plugins/` on launch) and enable the chip under
+**Capabilities → Plugins → Kenari Usage**.
+
+### Manual install (no git)
+
+```bash
+git clone https://github.com/averous12/hermes-kenari-provider /tmp/kenari-plugin
+
+cp -r /tmp/kenari-plugin/kenari        ~/.hermes/plugins/model-providers/kenari
+cp -r /tmp/kenari-plugin/kenari-usage  ~/.hermes/plugins/kenari-usage
+```
+
+Verify:
+
+```bash
+hermes plugins list          # `kenari` and `kenari-usage`, both enabled
 hermes doctor                # provider health check
+hermes usage --provider kenari
 ```
 
 ## Configure
@@ -128,7 +168,7 @@ small Python backend that reuses the provider's own usage snapshot.
 # 1. Install the companion (flat plugin dir — the desktop-half copier
 #    only scans plugins/<name>/, not plugins/model-providers/):
 cp -r kenari-usage ~/.hermes/plugins/kenari-usage
-# or: hermes plugins install https://github.com/avero/hermes-provider-kenari --subdir kenari-usage
+# or: hermes plugins install averous12/hermes-kenari-provider/kenari-usage
 
 # 2. Restart the desktop app (it copies the desktop half on launch),
 #    or run Rescan/Rebuild from the app if available.

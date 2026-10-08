@@ -28,8 +28,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/avero/hermes-provider-kenari"
-Issues = "https://github.com/avero/hermes-provider-kenari/issues"
+Homepage = "https://github.com/averous12/hermes-kenari-provider"
+Issues = "https://github.com/averous12/hermes-kenari-provider/issues"
 Kenari = "https://kenari.id"
 
 # Hermes discovers pip-installed providers through this group. A bare module
