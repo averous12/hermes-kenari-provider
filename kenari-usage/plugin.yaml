@@ -1,0 +1,5 @@
+name: kenari-usage
+kind: hermes-plugin
+version: 0.1.0
+description: Kenari 7d/30d usage chip for the desktop statusbar
+author: avero
