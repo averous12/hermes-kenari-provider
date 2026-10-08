@@ -103,7 +103,7 @@ model:
 | `step-3-7-flash:free` | Free, tool-calling — good default for zero-balance setups |
 | `muse-spark-1-3-contributor:free` | Free, vision-capable, 1M context |
 | `step-3-7-flash` | Paid, cheapest tool-calling route at last check |
-| `glm-5-3-flash` | Paid, cheap, vision, 1M context (aux default) |
+| `glm-5-3-flash` | Paid, cheap, vision, 1M context |
 | `claude-haiku-5-5` | Paid, frontier-cheap, 1M context |
 
 Run `hermes model` to see the live list for *your* key — it's read fresh

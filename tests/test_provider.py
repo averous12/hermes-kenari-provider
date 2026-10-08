@@ -75,7 +75,8 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(profile.hostname, "kenari.id")
         self.assertTrue(profile.supports_vision)
         self.assertTrue(profile.supports_prompt_cache_key)
-        self.assertEqual(profile.default_aux_model, "glm-5-3-flash")
+        # Aux default must be callable by scoped keys too: a :free route.
+        self.assertTrue(profile.default_aux_model.endswith(":free"))
 
     def test_fallback_models_present(self):
         _, profile = conftest_stub.load_plugin()
@@ -501,6 +502,28 @@ class TestFetchAccountUsage(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("KENARI_API_KEY", None)
             self.assertIsNone(self.profile.fetch_account_usage())
+
+    def test_public_pricing_uses_browser_ua(self):
+        # kenari.id's WAF 403s Python-urllib/* — the public-pricing fetch
+        # must identify with an honest non-urllib UA.
+        seen = {}
+
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/account/balance") or url.endswith("/account/quota"):
+                raise _FakeHTTPError(b"{}", 403)
+            if url.endswith("/api/public/pricing"):
+                seen["ua"] = req.get_header("User-agent")
+                return _FakeResponse(json.dumps({"free_tier": {"daily": 50}}).encode())
+            return _FakeResponse(
+                json.dumps({"total": {"requests": 1, "cost_micro_idr": 0}}).encode()
+            )
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            self.profile.fetch_account_usage(api_key="kn-scoped")
+        self.assertIn("hermes-kenari-plugin", seen.get("ua", ""))
+        self.assertNotIn("Python-urllib", seen.get("ua", ""))
 
     def test_all_failing_returns_none(self):
         def boom(req, timeout=8.0):

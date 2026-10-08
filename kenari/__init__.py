@@ -492,8 +492,9 @@ class KenariProfile(ProviderProfile):
         """Key-aware cheap model for auxiliary tasks, or "".
 
         For a model-scoped key the static ``default_aux_model``
-        (``glm-5-3-flash``) may be outside the key's scope, which would
-        fail every compression/title/vision call. When the catalog and
+        (a ``:free`` route, callable by every key) may still fall outside
+        a given key's scope, which would fail every
+        compression/title/vision call. When the catalog and
         the key scope are both cached, answer with the first allowed
         model (vision-capable when ``vision=True``); otherwise return
         "" so the caller falls through to ``default_aux_model``.
@@ -803,7 +804,13 @@ class KenariProfile(ProviderProfile):
             open_url = _url_opener()
             try:
                 req = urllib.request.Request(
-                    PUBLIC_PRICING_URL, headers={"Accept": "application/json"}
+                    PUBLIC_PRICING_URL,
+                    headers={
+                        "Accept": "application/json",
+                        # kenari.id's WAF 403s the default Python-urllib/*
+                        # UA (live 2026-10-08); identify honestly instead.
+                        "User-Agent": "hermes-kenari-plugin",
+                    },
                 )
                 with open_url(req, timeout=8.0) as resp:
                     public = json.loads(resp.read().decode())
@@ -866,9 +873,11 @@ PROFILE_FIELDS: dict[str, Any] = {
     "supports_vision": True,
     # Documented chat-completions field with OpenAI-compatible semantics.
     "supports_prompt_cache_key": True,
-    # Cheap, paid (no :free rate limits), vision-capable, 1M context —
-    # suits compression, title generation, and vision auxiliary calls.
-    "default_aux_model": "glm-5-3-flash",
+    # Aux default: a :free route callable by EVERY key (scoped or full —
+    # free calls never touch balance). agnes-3-0-flash:free is
+    # vision-capable, tool-calling, 512k ctx, and answered cleanly live.
+    # resolve_aux_model() refines this per key-scope when consulted.
+    "default_aux_model": "agnes-3-0-flash:free",
     # Shown only when the live catalog is unreachable. Tool-capable chat
     # routes spanning vendors, verified against the live catalog —
     # including two :free entries for zero-balance setups.
