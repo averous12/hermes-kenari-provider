@@ -188,6 +188,34 @@ def install_stubs(*, legacy: bool = False) -> dict[str, Any]:
     pricing_mod = types.ModuleType("agent.usage_pricing")
     pricing_mod.CostResult = StubCostResult
 
+    # The kenari-usage backend imports fastapi at module scope. A bare
+    # checkout (system Python) has no fastapi, so stub just enough for the
+    # pure payload shaper the tests exercise.
+    try:  # pragma: no cover — present in the Hermes venv
+        import fastapi  # noqa: F401
+    except Exception:
+        fastapi_mod = types.ModuleType("fastapi")
+
+        class _StubRouter:
+            def __init__(self):
+                self.routes = []
+
+            def get(self, path, **_kw):
+                def _decorator(fn):
+                    self.routes.append(type("R", (), {"path": path})())
+                    return fn
+
+                return _decorator
+
+        fastapi_mod.APIRouter = _StubRouter  # type: ignore[attr-defined]
+        responses_mod = types.ModuleType("fastapi.responses")
+        responses_mod.JSONResponse = lambda content, status_code=200, **kw: type(  # type: ignore[attr-defined]
+            "Resp", (), {"body": json.dumps(content).encode(), "status_code": status_code}
+        )()
+        fastapi_mod.responses = responses_mod  # type: ignore[attr-defined]
+        sys.modules["fastapi"] = fastapi_mod
+        sys.modules["fastapi.responses"] = responses_mod
+
     sys.modules["providers"] = providers_mod
     sys.modules["providers.base"] = base_mod
     sys.modules["hermes_cli"] = hermes_cli_mod

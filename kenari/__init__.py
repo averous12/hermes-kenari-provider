@@ -865,6 +865,28 @@ _KEY_ALLOW_CACHE: dict[tuple[str, str], frozenset[str] | None] = {}
 _SCOPE_PROBE_MODEL = "__kenari_key_scope_probe__"
 
 
+def _resolve_kenari_key() -> str:
+    """The Kenari API key, resolved the way core does.
+
+    ``resolve_api_key_provider_credentials`` consults Hermes' secret scope
+    (which loads ``~/.hermes/.env``), so the backend works in processes
+    that never inherited the value into ``os.environ`` — the dashboard
+    serve process, for one. Falls back to the raw env var.
+    """
+    import os
+
+    try:
+        from hermes_cli.auth import resolve_api_key_provider_credentials
+
+        creds = resolve_api_key_provider_credentials(PROVIDER_ID) or {}
+        key = str(creds.get("api_key") or "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    return (os.environ.get(API_KEY_ENV) or "").strip()
+
+
 def _url_opener():
     """Return Hermes' credential-safe URL opener, or urllib's as a fallback.
 
@@ -1250,7 +1272,7 @@ class KenariProfile(ProviderProfile):
 
         if _CATALOG_CACHE is None:
             return ""
-        key = (os.environ.get(API_KEY_ENV) or "").strip()
+        key = _resolve_kenari_key()
         if not key:
             return ""
         allowed = _fetch_key_allowed_models(
@@ -1410,7 +1432,7 @@ class KenariProfile(ProviderProfile):
         except Exception:
             return None
 
-        key = (api_key or os.environ.get(API_KEY_ENV) or "").strip()
+        key = (api_key or _resolve_kenari_key()).strip()
         if not key:
             return None
         base = (
@@ -1623,19 +1645,16 @@ PROFILE_FIELDS: dict[str, Any] = {
     # vision-capable, tool-calling, 512k ctx, and answered cleanly live.
     # resolve_aux_model() refines this per key-scope when consulted.
     "default_aux_model": "agnes-3-0-flash:free",
-    # Shown only when the live catalog is unreachable. Tool-capable chat
-    # routes spanning vendors, verified against the live catalog —
-    # including two :free entries for zero-balance setups.
-    "fallback_models": (
-        "step-3-7-flash",
-        "deepseek-v4-flash",
-        "glm-5-3-flash",
-        "gpt-oss-20b",
-        "kimi-k3",
-        "claude-haiku-5-5",
-        "step-3-7-flash:free",
-        "muse-spark-1-3-contributor:free",
-    ),
+    # Deliberately EMPTY. A provider's curated list is unioned into every
+    # picker result (hermes_cli.models.merge_profile_catalog), and for a
+    # model-scoped key those ids are exactly the ones the gateway rejects
+    # ("model 'x' is not allowed by this key"). fetch_models() is the
+    # single source of truth: the live catalog intersected with the key's
+    # scope, refreshed whenever the credential changes (the disk cache is
+    # fingerprint-keyed on KENARI_API_KEY, so saving a new key re-probes).
+    # An outage yields an empty picker — honest, and never a list of
+    # models the key cannot call.
+    "fallback_models": (),
     # Per-model capabilities in the canonical model_overrides schema, so
     # Hermes routes Kenari ids correctly (context windows, vision, tool
     # and reasoning badges, image routing) without models.dev knowing

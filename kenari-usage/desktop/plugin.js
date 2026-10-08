@@ -23,9 +23,9 @@ const ID = 'kenari-usage'
 // figures move slowly — a 5-minute poll is plenty, with click-to-refresh.
 const POLL_MS = 5 * 60 * 1000
 
-function fmtRequests(total) {
-  if (!total || typeof total.requests !== 'number') return null
-  return `${total.requests} req`
+function pct(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return null
+  return `${Math.round(value)}%`
 }
 
 function KenariChip({ ctx }) {
@@ -42,26 +42,49 @@ function KenariChip({ ctx }) {
     retryDelay: 5000,
   })
 
-  const totals = data && data.ok ? data : null
-  const seven = totals && totals.usage_7d ? fmtRequests(totals.usage_7d) : null
-  const thirty = totals && totals.usage_30d ? fmtRequests(totals.usage_30d) : null
+  const summary = data && data.ok ? data : null
+  const plan = summary ? summary.plan : null
+  const weekLeft = plan ? pct(plan.week_remaining_percent) : null
+  const monthLeft = plan ? pct(plan.month_remaining_percent) : null
 
   let label
-  if (isLoading && !totals) {
+  if (isLoading && !summary) {
     label = t('loading')
-  } else if (seven && thirty) {
-    label = t('chipLabel', seven, thirty)
-  } else if (totals) {
-    label = t('partial')
-  } else if (isError || (data && !data.ok)) {
+  } else if (weekLeft && monthLeft) {
+    label = t('chipLabel', weekLeft, monthLeft)
+  } else if (weekLeft || monthLeft) {
+    label = t('chipPartial', weekLeft || '—', monthLeft || '—')
+  } else if (summary) {
+    // Reachable but no plan windows (e.g. a model-scoped key: Kenari
+    // refuses /account/quota with 403, or no active subscription).
+    label = t('noPlan')
+  } else if (isError) {
     label = t('unavailable')
   } else {
     label = t('loading')
   }
 
-  const tipLines = totals && totals.lines && totals.lines.length
-    ? totals.lines.join('\n')
-    : t('tipEmpty', (data && data.reason) || gateway)
+  const tipLines = []
+  if (plan) {
+    if (plan.name) tipLines.push(t('planName', plan.name))
+    if (weekLeft) {
+      tipLines.push(
+        t('weekLine', weekLeft, plan.week_detail || '', plan.week_resets_at || t('noReset'))
+      )
+    }
+    if (monthLeft) {
+      tipLines.push(
+        t('monthLine', monthLeft, plan.month_detail || '', plan.month_resets_at || t('noReset'))
+      )
+    }
+  }
+  if (summary && summary.lines && summary.lines.length) {
+    if (tipLines.length) tipLines.push('')
+    tipLines.push(...summary.lines)
+  }
+  if (!tipLines.length) {
+    tipLines.push(t('tipEmpty', (data && data.reason) || gateway))
+  }
 
   const onClick = () => {
     haptic('tap')
@@ -71,7 +94,7 @@ function KenariChip({ ctx }) {
   }
 
   return jsx(Tip, {
-    label: tipLines,
+    label: tipLines.join('\n'),
     children: jsx('button', {
       className: cn(
         'inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem] transition-colors',
@@ -97,20 +120,34 @@ export default {
   register(ctx) {
     ctx.i18n.register({
       en: {
-        chipTip: 'Kenari 7d / 30d usage — click to refresh',
+        chipTip: 'Kenari plan quota left — 7d / 30d — click to refresh',
         loading: 'kenari …',
         unavailable: 'kenari n/a',
-        partial: 'kenari ~',
-        chipLabel: (seven, thirty) => `kenari 7d ${seven} • 30d ${thirty}`,
-        tipEmpty: (why) => `Kenari usage unavailable (${why})`
+        noPlan: 'kenari — no plan',
+        chipLabel: (week, month) => `kenari 7d ${week} left • 30d ${month} left`,
+        chipPartial: (week, month) => `kenari 7d ${week} • 30d ${month}`,
+        planName: plan => `Plan: ${plan}`,
+        weekLine: (pctLeft, detail, reset) =>
+          `7d remaining: ${pctLeft}${detail ? ` (${detail})` : ''} • resets ${reset}`,
+        monthLine: (pctLeft, detail, reset) =>
+          `30d remaining: ${pctLeft}${detail ? ` (${detail})` : ''} • resets ${reset}`,
+        noReset: 'unknown',
+        tipEmpty: why => `Kenari usage unavailable (${why})`
       },
       id: {
-        chipTip: 'Pemakaian Kenari 7d / 30d — klik untuk memuat ulang',
+        chipTip: 'Sisa kuota paket Kenari — 7d / 30d — klik untuk memuat ulang',
         loading: 'kenari …',
         unavailable: 'kenari n/a',
-        partial: 'kenari ~',
-        chipLabel: (seven, thirty) => `kenari 7d ${seven} • 30d ${thirty}`,
-        tipEmpty: (why) => `Pemakaian Kenari tidak tersedia (${why})`
+        noPlan: 'kenari — tanpa paket',
+        chipLabel: (week, month) => `kenari 7d sisa ${week} • 30d sisa ${month}`,
+        chipPartial: (week, month) => `kenari 7d ${week} • 30d ${month}`,
+        planName: plan => `Paket: ${plan}`,
+        weekLine: (pctLeft, detail, reset) =>
+          `Sisa 7d: ${pctLeft}${detail ? ` (${detail})` : ''} • reset ${reset}`,
+        monthLine: (pctLeft, detail, reset) =>
+          `Sisa 30d: ${pctLeft}${detail ? ` (${detail})` : ''} • reset ${reset}`,
+        noReset: 'tidak diketahui',
+        tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }
     })
 

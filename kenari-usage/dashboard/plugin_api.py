@@ -27,17 +27,42 @@ def _snapshot_to_payload(snapshot: Any) -> dict[str, Any]:
         {
             "label": w.label,
             "used_percent": w.used_percent,
+            "remaining_percent": (
+                None if w.used_percent is None else max(0.0, 100.0 - float(w.used_percent))
+            ),
             "reset_at": w.reset_at.isoformat() if w.reset_at else None,
             "detail": w.detail,
         }
         for w in (snapshot.windows or [])
     ]
+
+    # The chip shows PLAN QUOTA REMAINING (week / month), which lives in
+    # the account-quota windows — not request counts. ``hermes usage``
+    # labels them "Plan weekly" / "Plan monthly"; map them to stable keys.
+    by_label = {w["label"]: w for w in windows}
+    week = by_label.get("Plan weekly")
+    month = by_label.get("Plan monthly")
+
+    plan = None
+    if snapshot.plan or week or month:
+        plan = {
+            "name": snapshot.plan,
+            "week_remaining_percent": (week or {}).get("remaining_percent"),
+            "week_used_percent": (week or {}).get("used_percent"),
+            "week_resets_at": (week or {}).get("reset_at"),
+            "week_detail": (week or {}).get("detail"),
+            "month_remaining_percent": (month or {}).get("remaining_percent"),
+            "month_used_percent": (month or {}).get("used_percent"),
+            "month_resets_at": (month or {}).get("reset_at"),
+            "month_detail": (month or {}).get("detail"),
+        }
+
     raw = snapshot.raw if isinstance(snapshot.raw, dict) else {}
     return {
         "ok": True,
         "provider": snapshot.provider,
         "title": snapshot.title,
-        "plan": snapshot.plan,
+        "plan": plan,
         "windows": windows,
         "lines": list(snapshot.details or []),
         "usage_7d": raw.get("usage_7d"),

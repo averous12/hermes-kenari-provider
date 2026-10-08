@@ -78,10 +78,16 @@ class TestRegistration(unittest.TestCase):
         # Aux default must be callable by scoped keys too: a :free route.
         self.assertTrue(profile.default_aux_model.endswith(":free"))
 
-    def test_fallback_models_present(self):
+    def test_fallback_models_empty_by_design(self):
+        # A curated list would be unioned into every picker result and, for a
+        # model-scoped key, would offer models the gateway rejects. The live
+        # catalog (intersected with the key scope) is the only source.
         _, profile = conftest_stub.load_plugin()
-        self.assertTrue(profile.fallback_models)
-        self.assertIn("step-3-7-flash:free", profile.fallback_models)
+        self.assertEqual(profile.fallback_models, ())
+
+    def test_fallback_models_empty_legacy_too(self):
+        _, profile = conftest_stub.load_plugin(legacy=True)
+        self.assertEqual(profile.fallback_models, ())
 
     def test_importable_on_legacy_profile_base(self):
         # Older builds lack vision/cache/hostname/resolve_aux fields; the
@@ -555,6 +561,62 @@ class TestFetchAccountUsage(unittest.TestCase):
         joined = "\n".join(snap.details)
         self.assertIn("Rp19.589 available", joined)
         self.assertIn("Last 7d: 3 requests", joined)
+
+    def test_plan_percentages_map_from_quota_windows(self):
+        # The statusbar chip renders PLAN REMAINING percentage, not request
+        # counts: week/month windows -> remaining_percent = 100 - used.
+        from datetime import datetime, timezone
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-usage" / "dashboard"))
+        import importlib
+
+        import plugin_api  # noqa: E402
+
+        importlib.reload(plugin_api)
+        from conftest_stub import StubAccountUsageSnapshot, StubAccountUsageWindow
+
+        snapshot = StubAccountUsageSnapshot(
+            provider="kenari", source="test", fetched_at=datetime.now(timezone.utc),
+            title="Kenari usage", plan="Indie",
+            windows=(
+                StubAccountUsageWindow(
+                    label="Plan weekly", used_percent=16.0,
+                    reset_at=datetime(2026, 10, 13, tzinfo=timezone.utc),
+                    detail="Rp63.000 left of Rp75.000",
+                ),
+                StubAccountUsageWindow(
+                    label="Plan monthly", used_percent=4.0,
+                    reset_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+                    detail="Rp288.000 left of Rp300.000",
+                ),
+            ),
+            details=("Balance: Rp19.589 available",), raw={},
+        )
+        payload = plugin_api._snapshot_to_payload(snapshot)
+        self.assertEqual(payload["plan"]["week_remaining_percent"], 84.0)
+        self.assertEqual(payload["plan"]["month_remaining_percent"], 96.0)
+        self.assertEqual(payload["plan"]["name"], "Indie")
+        self.assertIn("Rp63.000 left", payload["plan"]["week_detail"])
+
+    def test_plan_none_without_quota_windows(self):
+        from datetime import datetime, timezone
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-usage" / "dashboard"))
+        import importlib
+
+        import plugin_api  # noqa: E402
+
+        importlib.reload(plugin_api)
+        from conftest_stub import StubAccountUsageSnapshot
+
+        snapshot = StubAccountUsageSnapshot(
+            provider="kenari", source="test", fetched_at=datetime.now(timezone.utc),
+            title="Kenari usage", plan=None, windows=(),
+            details=("Last 7d: 565 requests",), raw={},
+        )
+        payload = plugin_api._snapshot_to_payload(snapshot)
+        self.assertIsNone(payload["plan"])
+        self.assertTrue(payload["ok"])
 
     def test_no_key_returns_none(self):
         with patch.dict(os.environ, {}, clear=False):
