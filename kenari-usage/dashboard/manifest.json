@@ -1,0 +1,7 @@
+{
+  "name": "kenari-usage",
+  "label": "Kenari Usage",
+  "description": "Kenari 7d/30d spend chip for the desktop statusbar",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}
