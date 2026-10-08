@@ -38,6 +38,14 @@ the provider registry.
   with a note instead of an error.
 - **`prompt_cache_key` opt-in** (documented Kenari field) and vision
   enabled (51 chat routes take image input).
+- **Model capabilities, no manual overrides.** `model_capabilities`
+  declares all 100 catalog models (context, tools, vision, reasoning,
+  vendor family) from the live catalog — Hermes routes Kenari ids
+  correctly without models.dev entries or hand-written
+  `model_overrides`. Refreshed in place on every catalog fetch.
+- **Desktop statusbar chip** (`kenari-usage/` companion): 7d/30d usage
+  in `statusBar.right`, 5-minute poll, click-to-refresh, full lines in
+  the tooltip. See [Desktop chip](#desktop-chip-7d30d-statusbar) below.
 
 ## Requirements
 
@@ -109,6 +117,30 @@ model:
 Run `hermes model` to see the live list for *your* key — it's read fresh
 from the Kenari catalog and intersected with your key's scope.
 
+## Desktop chip (7d/30d statusbar)
+
+The `kenari-usage/` folder is a companion plugin: a `statusBar.right`
+chip showing `kenari 7d 321 req • 30d 321 req` (live figures), with the
+full usage lines in the tooltip and click-to-refresh. Data comes from a
+small Python backend that reuses the provider's own usage snapshot.
+
+```bash
+# 1. Install the companion (flat plugin dir — the desktop-half copier
+#    only scans plugins/<name>/, not plugins/model-providers/):
+cp -r kenari-usage ~/.hermes/plugins/kenari-usage
+# or: hermes plugins install https://github.com/avero/hermes-provider-kenari --subdir kenari-usage
+
+# 2. Restart the desktop app (it copies the desktop half on launch),
+#    or run Rescan/Rebuild from the app if available.
+
+# 3. Enable the chip: Capabilities → Plugins → Kenari Usage → on.
+#    The backend needs the provider enabled (already done above).
+```
+
+The chip polls every 5 minutes (Kenari rate-limits usage routes) and
+fails quiet — no key or a down gateway shows `kenari n/a`, never a
+toast.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -119,6 +151,7 @@ from the Kenari catalog and intersected with your key's scope.
 | `insufficient_balance` (402) | Top up at <https://kenari.id/pay>, lower `max_tokens`, or switch to a `:free` model. |
 | `free_quota_daily` (429) | Free-daily allowance spent — wait for UTC midnight, or use a paid model. |
 | Balance/plan hidden in `hermes usage` | Scoped keys can't read account endpoints; usage shown is this key only. |
+| Wrong context/vision for a Kenari model | Should not happen — capabilities are declared from the live catalog. If one is wrong, your explicit `model_overrides.<kenari>.<model>` in `config.yaml` still wins; report it as a plugin issue. |
 
 Logs live under `~/.hermes/logs/` — `hermes logs --follow` is the quickest
 way to watch a request go through.
