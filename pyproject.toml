@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-provider-kenari"
+version = "0.1.0"
+description = "Kenari.id model-provider plugin for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "avero" }]
+keywords = [
+    "hermes-agent",
+    "hermes-plugin",
+    "model-provider",
+    "kenari",
+    "llm",
+    "openai-compatible",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/avero/hermes-provider-kenari"
+Issues = "https://github.com/avero/hermes-provider-kenari/issues"
+Kenari = "https://kenari.id"
+
+# Hermes discovers pip-installed providers through this group. A bare module
+# target self-registers on import; the loader skips callables that need
+# arguments, so no register() shim is needed here.
+[project.entry-points."hermes_agent.plugins"]
+kenari = "kenari"
+
+[tool.setuptools]
+packages = ["kenari"]
+
+[tool.setuptools.package-data]
+kenari = ["plugin.yaml", "after-install.md"]
