@@ -295,8 +295,8 @@ function kenariPillLabel() {
   }
 }
 
-/** Label text for a free-cache model, in the active UI language. */
-let pillText = id => `🪁 ${id} · cache-free`
+/** Fallback label text (used only if the i18n binder never runs). */
+let pillText = id => `⚡ ${id} · cache-free`
 
 /** Rebind `pillText` to the plugin's i18n resolver once ctx is available. */
 function bindPillText(ctx) {
@@ -338,7 +338,7 @@ export default {
           `30d remaining: ${pctLeft}%${detail ? ` (${detail})` : ''} • resets in ${remaining}`,
         noReset: 'unknown',
         freeCacheLine: models => `Cache-free: ${models}`,
-        pillFreeCache: id => `${id} · cache-free`,
+        pillFreeCache: id => `⚡ ${id} · cache-free`,
         tipEmpty: why => `Kenari usage unavailable (${why})`
       },
       id: {
@@ -362,7 +362,7 @@ export default {
           `Sisa 30d: ${pctLeft}%${detail ? ` (${detail})` : ''} • reset dalam ${remaining}`,
         noReset: 'tidak diketahui',
         freeCacheLine: models => `Cache gratis: ${models}`,
-        pillFreeCache: id => `${id} · cache gratis`,
+        pillFreeCache: id => `⚡ ${id} · cache gratis`,
         tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }
     })
