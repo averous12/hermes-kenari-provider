@@ -152,6 +152,11 @@ sdk.__state.queryData = {
     month_resets_at: new Date(Date.now() + 21 * DAY + 3 * HOUR).toISOString(),
     month_detail: 'Rp288.000 left of Rp300.000'
   },
+  free_cache: {
+    plan_id: 'plan-ringan-v3',
+    models: ['deepseek-v4-flash', 'deepseek-v4-1-flash', 'mimo-v2-6-flash'],
+    count: 3
+  },
   windows: [],
   lines: ['Balance: Rp19.589 available (Rp0 reserved)', 'Last 7d: 565 requests • Rp0 spent']
 }

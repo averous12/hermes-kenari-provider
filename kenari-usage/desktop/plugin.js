@@ -170,6 +170,12 @@ function KenariChip({ ctx }) {
         w.resetsAt ? remaining : t('noReset'))
     )
   }
+  // Free-cache models: cache reads billed at $0 on the active plan (Kenari
+  // /api/plans → free_cache_models, matched to /account/quota's plan name).
+  const freeCache = summary && summary.free_cache
+  if (freeCache && freeCache.models && freeCache.models.length) {
+    tipLines.push(t('freeCacheLine', freeCache.models.join(', ')))
+  }
   if (summary && summary.lines && summary.lines.length) {
     if (tipLines.length) tipLines.push('')
     tipLines.push(...summary.lines)
@@ -257,6 +263,7 @@ export default {
         monthLine: (pctLeft, detail, remaining) =>
           `30d remaining: ${pctLeft}%${detail ? ` (${detail})` : ''} • resets in ${remaining}`,
         noReset: 'unknown',
+        freeCacheLine: models => `Cache-free: ${models}`,
         tipEmpty: why => `Kenari usage unavailable (${why})`
       },
       id: {
@@ -279,6 +286,7 @@ export default {
         monthLine: (pctLeft, detail, remaining) =>
           `Sisa 30d: ${pctLeft}%${detail ? ` (${detail})` : ''} • reset dalam ${remaining}`,
         noReset: 'tidak diketahui',
+        freeCacheLine: models => `Cache gratis: ${models}`,
         tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }
     })

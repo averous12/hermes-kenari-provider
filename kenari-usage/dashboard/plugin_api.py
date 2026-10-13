@@ -22,6 +22,67 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_KENARI_PLANS_URL = "https://kenari.id/api/plans"
+_plans_cache: dict[str, Any] = {"at": 0.0, "plans": None}
+
+
+def _fetch_plans() -> list[dict[str, Any]] | None:
+    """Plan catalog from Kenari's public ``/api/plans`` (no key needed).
+
+    Cached in-process for 10 minutes — the plan table changes rarely and the
+    statusbar polls every 2 minutes.
+    """
+    import time
+
+    now = time.monotonic()
+    if _plans_cache["plans"] is not None and now - _plans_cache["at"] < 600:
+        return _plans_cache["plans"]
+    try:
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(
+            _KENARI_PLANS_URL,
+            headers={"Accept": "application/json", "User-Agent": "hermes-kenari-plugin"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception as exc:
+        log.debug("kenari plans fetch failed: %s", exc)
+        return _plans_cache["plans"]  # stale beats nothing
+    plans = payload if isinstance(payload, list) else payload.get("plans")
+    if not isinstance(plans, list):
+        return _plans_cache["plans"]
+    _plans_cache["plans"] = plans
+    _plans_cache["at"] = now
+    return plans
+
+
+def _free_cache_for_plan(plan_name: str | None) -> dict[str, Any] | None:
+    """``free_cache_models`` for the ACTIVE plan, resolved by name.
+
+    Kenari marks a per-plan subset of models whose *cache reads* are free
+    (``/api/plans`` → ``free_cache_models``); the active plan name comes from
+    ``/v1/account/quota`` (``quota.plan.name``). Matching the two gives the
+    live free-cache list without hard-coding plan knowledge.
+    """
+    if not plan_name:
+        return None
+    plans = _fetch_plans()
+    if not plans:
+        return None
+    want = str(plan_name).strip().lower()
+    plan = next((p for p in plans if str(p.get("name", "")).strip().lower() == want), None)
+    if plan is None:
+        return None
+    models = plan.get("free_cache_models") or []
+    return {
+        "plan_id": plan.get("id"),
+        "models": [str(m) for m in models],
+        "count": len(models),
+    }
+
+
 def _snapshot_to_payload(snapshot: Any) -> dict[str, Any]:
     windows = [
         {
@@ -58,11 +119,13 @@ def _snapshot_to_payload(snapshot: Any) -> dict[str, Any]:
         }
 
     raw = snapshot.raw if isinstance(snapshot.raw, dict) else {}
+    free_cache = _free_cache_for_plan(snapshot.plan)
     return {
         "ok": True,
         "provider": snapshot.provider,
         "title": snapshot.title,
         "plan": plan,
+        "free_cache": free_cache,
         "windows": windows,
         "lines": list(snapshot.details or []),
         "usage_7d": raw.get("usage_7d"),
