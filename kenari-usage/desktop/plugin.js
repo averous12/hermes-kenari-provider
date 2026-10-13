@@ -41,6 +41,31 @@ const ROTATE_MS = 8000
 const $now = atom(Date.now())
 const $slot = atom(0)
 
+// Free-cache model ids for the ACTIVE plan, as reported by the backend's
+// `/usage-summary` (`free_cache.models`). The statusbar chip fills this in on
+// every poll; the composer pill reads it to decide whether to badge. An empty
+// list means "unknown / no plan", which renders the plain label — never a
+// false badge.
+const $freeCache = atom([])
+
+/** Strip a `:free` route suffix when matching, so `x` and `x:free` agree. */
+function baseId(model) {
+  const s = String(model || '').trim()
+  const colon = s.indexOf(':')
+  return colon > 0 ? s.slice(0, colon) : s
+}
+
+/** Publish the free-cache list from a usage payload (no-op when absent). */
+function publishFreeCache(summary) {
+  const models = summary && summary.free_cache && summary.free_cache.models
+  const next = Array.isArray(models) ? models.map(m => baseId(m)).filter(Boolean) : []
+  const prev = $freeCache.get()
+  // Atom writes are value-only; compare first so an identical poll doesn't
+  // wake the pill's subscriber on a 2-minute timer.
+  if (next.length === prev.length && next.every((m, i) => m === prev[i])) return
+  $freeCache.set(next)
+}
+
 /** Run `setup` with a plugin-scoped interval; auto-clears on unload/reload. */
 function useInterval(ctx, setup, deps) {
   useEffect(() => {
@@ -111,6 +136,11 @@ function KenariChip({ ctx }) {
 
   const summary = data && data.ok ? data : null
   const plan = summary ? summary.plan : null
+
+  // Feed the composer-pill badge with this poll's free-cache list.
+  useEffect(() => {
+    publishFreeCache(summary)
+  }, [summary])
 
   const windows = []
   if (plan) {
@@ -236,6 +266,50 @@ function ensureStyles(ctx) {
   })
 }
 
+/**
+ * Composer-pill label provider (`composer.modelPill`).
+ *
+ * The pill shows the CURRENT model; a provider may rewrite only its label
+ * text — chrome, menu, and the routed model id are untouched, so a badge
+ * here can never break a request. We append a kite marker when the active
+ * model is on the plan's free-cache list, and decline (`null`) otherwise,
+ * which leaves the core label in place.
+ *
+ * Reads the same `$freeCache` atom the statusbar chip publishes, so the two
+ * surfaces can't disagree. `label()` runs inside the host's `useMemo`, NOT
+ * during a component render — so it must be a plain atom read (`$freeCache.get()`),
+ * never a hook. The host re-runs it when the atom's subscribers change.
+ */
+function kenariPillLabel() {
+  return {
+    label: ({ model, compact }) => {
+      // The host skips providers in compact mode (chevron only); refuse
+      // anyway so the contract holds regardless of host version.
+      if (compact) return null
+      const id = baseId(model)
+      if (!id) return null
+      const list = $freeCache.get()
+      if (!list.length || !list.includes(id)) return null
+      return pillText(id)
+    }
+  }
+}
+
+/** Label text for a free-cache model, in the active UI language. */
+let pillText = id => `🪁 ${id} · cache-free`
+
+/** Rebind `pillText` to the plugin's i18n resolver once ctx is available. */
+function bindPillText(ctx) {
+  try {
+    const t = ctx && ctx.i18n && ctx.i18n.t
+    if (typeof t === 'function') {
+      pillText = id => t('pillFreeCache', id)
+    }
+  } catch {
+    // Keep the built-in default; the badge is cosmetic.
+  }
+}
+
 export default {
   id: ID, // must match the folder name (plugins/kenari-usage)
   name: 'Kenari Usage',
@@ -264,6 +338,7 @@ export default {
           `30d remaining: ${pctLeft}%${detail ? ` (${detail})` : ''} • resets in ${remaining}`,
         noReset: 'unknown',
         freeCacheLine: models => `Cache-free: ${models}`,
+        pillFreeCache: id => `${id} · cache-free`,
         tipEmpty: why => `Kenari usage unavailable (${why})`
       },
       id: {
@@ -287,15 +362,28 @@ export default {
           `Sisa 30d: ${pctLeft}%${detail ? ` (${detail})` : ''} • reset dalam ${remaining}`,
         noReset: 'tidak diketahui',
         freeCacheLine: models => `Cache gratis: ${models}`,
+        pillFreeCache: id => `${id} · cache gratis`,
         tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }
     })
+
+    bindPillText(ctx)
 
     ctx.register({
       id: 'usage-chip',
       area: 'statusBar.right',
       order: 130,
       render: () => jsx(KenariChip, { ctx })
+    })
+
+    // Composer-pill label: badges the ACTIVE model when its cache reads are
+    // free on this plan. A `data` contribution — the host reads `.data` and
+    // calls `.label(ctx)`. Declines (null) for every other model, so the
+    // core label is untouched. Never affects routing.
+    ctx.register({
+      id: 'pill-label',
+      area: 'composer.modelPill',
+      data: kenariPillLabel()
     })
   }
 }

@@ -199,8 +199,59 @@ console.log('chip label (no plan):', labelOf(chip.render().type({ ctx })))
 console.log('\nintervals registered (ms):', sdk.__state.intervals.map(i => i.ms).join(', '))
 console.log('query refetchInterval:', sdk.__state.lastQuery?.refetchInterval)
 
-// Exercise the interval callbacks so a throwing tick fails the probe.
+// ── composer pill label provider ────────────────────────────────────────
+const pill = registered.find(c => c.id === 'pill-label')
+if (!pill) throw new Error('pill-label contribution missing')
+if (pill.area !== 'composer.modelPill') throw new Error('wrong pill area: ' + pill.area)
+const provider = pill.data
+if (!provider || typeof provider.label !== 'function') throw new Error('pill provider has no label()')
+
+console.log('\n--- composer pill label ---')
+// The chip publishes the free-cache list from its poll, so re-render it with a
+// full plan payload first (the scoped-key case above cleared the list).
+sdk.__state.queryData = {
+  ok: true,
+  plan: { name: 'Indie', week_remaining_percent: 24, month_remaining_percent: 81 },
+  free_cache: { models: ['deepseek-v4-flash', 'deepseek-v4-1-flash', 'mimo-v2-6-flash'] },
+  windows: [],
+  lines: []
+}
+chip.render().type({ ctx })
 for (const { fn } of sdk.__state.intervals) fn()
-console.log('intervals ran without throwing')
+
+const cases = [
+  ['deepseek-v4-1-flash', 'free-cache model -> badged'],
+  ['deepseek-v4-flash', 'free-cache model -> badged'],
+  ['mimo-v2-6-flash', 'free-cache model -> badged'],
+  ['deepseek-v4-pro', 'paid model -> declines (core label wins)'],
+  ['claude-sonnet-5', 'paid model -> declines'],
+  ['', 'empty model -> declines'],
+  ['mimo-v2-6-flash:free', ':free route suffix -> still matched']
+]
+for (const [model, why] of cases) {
+  const out = provider.label({ model, reasoningEffort: '', compact: false })
+  console.log(`  ${(model || '(empty)').padEnd(24)} -> ${out === null ? 'null' : JSON.stringify(out)}   (${why})`)
+}
+
+// compact mode: the host never consults providers, but a stray call must not throw.
+const compactOut = provider.label({ model: 'deepseek-v4-1-flash', reasoningEffort: '', compact: true })
+console.log('  compact:true             ->', compactOut === null ? 'null' : JSON.stringify(compactOut))
+
+// A throwing/odd model value must not blank the pill (host catches, but be sure).
+for (const bad of [undefined, null, 123, {}]) {
+  try {
+    provider.label({ model: bad, reasoningEffort: '', compact: false })
+  } catch (e) {
+    console.log('  THREW on', JSON.stringify(bad), '->', e.message)
+  }
+}
+console.log('odd model values did not throw')
+
+// Label must be a plain string (the host renders it straight into JSX).
+const s = provider.label({ model: 'deepseek-v4-1-flash', reasoningEffort: '', compact: false })
+console.log('label is a non-empty string:', typeof s === 'string' && s.trim() !== '')
+
+for (const { fn } of sdk.__state.intervals) fn()
+console.log('intervals ran without throwing (post-pill)')
 
 fs.rmSync(tmp, { recursive: true, force: true })
