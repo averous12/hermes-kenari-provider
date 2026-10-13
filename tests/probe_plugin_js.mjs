@@ -180,6 +180,9 @@ const icon = iconOf(tree)
 console.log('chip icon:', JSON.stringify(icon?.props?.children), '| class:', icon?.props?.className)
 if (icon?.props?.children !== '\u{1F426}') throw new Error('chip icon is not the canary (U+1F426)')
 if (icon?.props?.className !== 'kenari-canary') throw new Error('chip icon class mismatch: ' + icon?.props?.className)
+// The icon span owns the mark; the label must NOT repeat it, or the chip
+// shows the bird twice.
+if (String(labelOf(tree)).includes('\u{1F426}')) throw new Error('label duplicates the canary mark')
 console.log('tooltip:')
 for (const line of String(tree?.props?.label).split('\n')) console.log('   ', line)
 

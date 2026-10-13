@@ -44,9 +44,12 @@ and the `--provider` flag all auto-wire from the provider registry.
   vendor family) from the live catalog — Hermes routes Kenari ids
   correctly without models.dev entries or hand-written
   `model_overrides`. Refreshed in place on every catalog fetch.
-- **Desktop statusbar chip** (`kenari-usage/` companion): 7d/30d usage
-  in `statusBar.right`, 5-minute poll, click-to-refresh, full lines in
-  the tooltip. See [Desktop chip](#desktop-chip-7d30d-statusbar) below.
+- **Desktop statusbar ticker** (`kenari-usage/` companion): plan quota
+  % left for 7d/30d with a live reset countdown in `statusBar.right`,
+  rotating windows, 2-minute poll, click-to-refresh, full lines in the
+  tooltip. Plus a **composer-pill badge** for the active model when its
+  cache reads are free on your plan. See
+  [Desktop chip](#desktop-chip-7d30d-statusbar-ticker) below.
 
 ## Requirements
 
@@ -175,12 +178,43 @@ model:
 Run `hermes model` to see the live list for *your* key — it's read fresh
 from the Kenari catalog and intersected with your key's scope.
 
-## Desktop chip (7d/30d statusbar)
+## Desktop chip (7d/30d statusbar ticker)
 
-The `kenari-usage/` folder is a companion plugin: a `statusBar.right`
-chip showing `kenari 7d 321 req • 30d 321 req` (live figures), with the
-full usage lines in the tooltip and click-to-refresh. Data comes from a
-small Python backend that reuses the provider's own usage snapshot.
+The `kenari-usage/` folder is a companion plugin with two desktop surfaces:
+
+**Statusbar chip** (`statusBar.right`) — a live ticker showing **plan quota
+remaining** (not request counts):
+
+```
+🐦 kenari 7d 24% · 1d 4h left      → rotates →      🐦 kenari 30d 81% · 21d 3h left
+```
+
+- Rotates between the 7-day and 30-day windows every 8s.
+- Each shows percent left plus a live countdown to that window's reset
+  (`4d 7h left` on the chip; `d h m s` in the tooltip).
+- The 1s clock is local math over cached data — no extra network.
+- The tooltip carries the full detail: plan name, both windows with Rp
+  left, and the plan's free-cache model list.
+- Click to refresh; polls every 2 minutes (well inside Kenari's
+  60 req/min limit on usage routes).
+
+**Composer pill** (`composer.modelPill`) — badges the *active* model when
+its cache reads are free on your plan:
+
+```
+⚡ deepseek-v4-1-flash · cache-free
+```
+
+This is a plugin-provided **label** only: chrome, menu, and the routed
+model id are untouched, so the badge can never affect a request. It
+declines (`null`) for every other model, leaving the core label in place.
+
+### Free-cache models are resolved dynamically
+
+Kenari publishes `free_cache_models` per plan at `/api/plans`; the active
+plan name comes from `/v1/account/quota`. The backend matches the two, so
+**a plan change needs no code change** — the chip tooltip and the pill
+badge both follow your current plan automatically.
 
 ```bash
 # 1. Install the companion (flat plugin dir — the desktop-half copier
@@ -195,9 +229,42 @@ cp -r kenari-usage ~/.hermes/plugins/kenari-usage
 #    The backend needs the provider enabled (already done above).
 ```
 
-The chip polls every 5 minutes (Kenari rate-limits usage routes) and
-fails quiet — no key or a down gateway shows `kenari n/a`, never a
-toast.
+The chip fails quiet — no key or a down gateway shows `kenari n/a`, never
+a toast. A model-scoped key that Kenari 403s on `/account/quota` shows
+`kenari — no plan` instead of an error.
+
+## Model picker rows (optional, needs a core patch)
+
+The in-chat picker's per-row price/badge chip is rendered by core code
+from a **core-only** pricing registry (`_PRICING_FETCHERS`) with no plugin
+hook, and picker rows have no plugin decoration area. A plugin therefore
+cannot badge picker rows — the composer pill above is the plugin-reachable
+equivalent.
+
+If you want live prices and a `Cache-free` chip on picker rows, apply the
+bundled patch:
+
+```bash
+python scripts/apply_kenari_pricing_patch.py            # idempotent
+python scripts/apply_kenari_pricing_patch.py --revert    # byte-clean undo
+python tests/verify_pricing_patch.py                     # apply/revert self-test
+```
+
+It registers a `kenari` entry in `_PRICING_FETCHERS` so `:free` routes
+badge green and paid routes show `$in/$out` per Mtok (cache rate included).
+**This edits Hermes core** (`hermes_cli/models_pricing.py`) and a `hermes`
+update will revert it — re-run the script after upgrading. The script
+keeps a `.kenari-orig` backup and refuses to double-apply.
+
+### Why not suffix the model name instead?
+
+The picker renders one string per model and uses it as **both** the label
+and the routed id (`onSelect({ provider, model })`), so a suffix like
+`deepseek-v4-1-flash · cache-free` would be sent to Kenari and rejected.
+There is no separate display-name field, and the existing suffix
+prettifier (`VARIANT_TAGS`: `-fast` / `-flash` / `-thinking` / `-preview`
+/ `-latest`) is a fixed list that *strips* rather than appends. The
+composer pill is the sanctioned place to change a model's display text.
 
 ## Troubleshooting
 
@@ -224,13 +291,38 @@ when present and skipped on older builds.
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v      # provider: 50 offline tests
+node tests/probe_plugin_js.mjs                # desktop half: loads the REAL
+                                             # plugin under stubbed SDK/react
+                                             # and asserts chip + pill output
+python tests/verify_pricing_patch.py          # core patch apply/revert
 ```
 
 The tests run fully offline: `tests/conftest_stub.py` stubs the Hermes
 `providers` runtime (including a legacy profile base), `agent`
 usage/cost contracts, and `hermes_cli.urllib_security`, so both modern
 and older Hermes builds are exercised.
+
+`tests/probe_plugin_js.mjs` is the only check that catches desktop-half
+bugs static linting misses: it rewrites the plugin's bare import
+specifiers to stubs, registers it, and inspects the rendered tree. It
+asserts the chip's icon span glyph *and* class, so a wrong marker fails
+loudly (that check exists because a wrong emoji shipped once).
+
+### Gotchas worth knowing before you edit the desktop half
+
+- **`atom.set()` takes a value, not an updater function.** `$slot.set(s => s + 1)`
+  stores the *function*; use `$slot.set($slot.get() + 1)`.
+- **The chip's mark is a separate `<span>`, not part of the label.** Editing
+  the label strings alone leaves the icon unchanged — assert the icon span.
+- **`composer.modelPill` labels run outside React render** (inside the host's
+  `useMemo`), so a provider must read atoms directly (`$freeCache.get()`), never
+  via a hook, and must return a plain string or `null`.
+- **Emoji support is not uniform.** Prefer Unicode ≤6.0 (`🐦` U+1F426 is fine;
+  `🪁` U+1FA81 and `🪶` U+1FAB6 are not). Older blocks render everywhere.
+- **`ModelPricing` lives in a generated file**
+  (`apps/shared/src/gateway-contract.generated.ts`) — never hand-edit it;
+  extra payload keys type-check via its `[key: string]: unknown` index.
 
 ## Links
 
