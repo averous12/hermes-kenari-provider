@@ -232,7 +232,7 @@ function KenariChip({ ctx }) {
         className: 'inline-flex items-center gap-1',
         children: [
           // The pulse is the ticker's "live" cue; reduced-motion turns it off.
-          jsx('span', { className: 'kenari-kite', children: '🪁' }),
+          jsx('span', { className: 'kenari-canary', children: '🐦' }),
           jsx('span', { className: 'tabular-nums', children: label })
         ]
       })
@@ -250,13 +250,13 @@ function ensureStyles(ctx) {
   const style = document.createElement('style')
   style.id = STYLE_ID
   style.textContent = `
-    @keyframes kenari-kite-pulse {
+    @keyframes kenari-canary-pulse {
       0%, 100% { opacity: 1; transform: translateY(0); }
       50%      { opacity: 0.72; transform: translateY(-1px); }
     }
-    .kenari-kite { display: inline-block; animation: kenari-kite-pulse 2.4s ease-in-out infinite; }
+    .kenari-canary { display: inline-block; animation: kenari-canary-pulse 2.4s ease-in-out infinite; }
     @media (prefers-reduced-motion: reduce) {
-      .kenari-kite { animation: none; }
+      .kenari-canary { animation: none; }
     }
   `
   document.head.appendChild(style)
@@ -271,7 +271,7 @@ function ensureStyles(ctx) {
  *
  * The pill shows the CURRENT model; a provider may rewrite only its label
  * text — chrome, menu, and the routed model id are untouched, so a badge
- * here can never break a request. We append a kite marker when the active
+ * here can never break a request. We append a bolt marker when the active
  * model is on the plan's free-cache list, and decline (`null`) otherwise,
  * which leaves the core label in place.
  *

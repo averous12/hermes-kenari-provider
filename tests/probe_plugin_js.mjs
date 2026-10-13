@@ -162,8 +162,13 @@ sdk.__state.queryData = {
 }
 
 function labelOf(tree) {
-  // <Tip><button><span><span(🪁)/><span(label)/></span></button></Tip>
+  // <Tip><button><span><span(🐦)/><span(label)/></span></button></Tip>
   return tree?.props?.children?.props?.children?.props?.children?.[1]?.props?.children
+}
+
+/** The chip's leading icon span (the canary mark). */
+function iconOf(tree) {
+  return tree?.props?.children?.props?.children?.props?.children?.[0]
 }
 
 // `chip.render()` returns `<KenariChip ctx={..} />` — a component element, not
@@ -171,6 +176,10 @@ function labelOf(tree) {
 // useValue, usePluginI18n) actually execute.
 const tree = chip.render().type({ ctx })
 console.log('\nchip label (slot 0):', labelOf(tree))
+const icon = iconOf(tree)
+console.log('chip icon:', JSON.stringify(icon?.props?.children), '| class:', icon?.props?.className)
+if (icon?.props?.children !== '\u{1F426}') throw new Error('chip icon is not the canary (U+1F426)')
+if (icon?.props?.className !== 'kenari-canary') throw new Error('chip icon class mismatch: ' + icon?.props?.className)
 console.log('tooltip:')
 for (const line of String(tree?.props?.label).split('\n')) console.log('   ', line)
 
