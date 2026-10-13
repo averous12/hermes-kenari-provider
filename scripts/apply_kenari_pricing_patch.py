@@ -24,6 +24,17 @@ APPLY
 
 Idempotent: re-running on an already-patched tree is a no-op, and
 ``--revert`` removes exactly what this added.
+
+NOTE ON THE DESKTOP HALF
+------------------------
+The picker's per-row type, ``ModelPricing``, is defined in a *generated*
+file: ``apps/shared/src/gateway-contract.generated.ts`` (emitted from the
+Python gateway contract). Do NOT hand-edit it. This patch sidesteps the
+question entirely by emitting ``free_cache`` as an extra dict key from
+``inventory._apply_pricing`` — the generated interface carries
+``[key: string]: unknown``, so an unknown key type-checks without a
+regeneration step. If a future change ever *requires* a typed field,
+regenerate the contract rather than editing the generated file.
 """
 
 from __future__ import annotations
