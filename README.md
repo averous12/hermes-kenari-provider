@@ -44,6 +44,12 @@ and the `--provider` flag all auto-wire from the provider registry.
   vendor family) from the live catalog — Hermes routes Kenari ids
   correctly without models.dev entries or hand-written
   `model_overrides`. Refreshed in place on every catalog fetch.
+- **Plan-covered filter (opt-in).** `KENARI_PLAN_ONLY=1` (or
+  `kenari.plan_only: true` in `config.yaml`) trims the picker to models
+  the **active plan** covers (`scope_models`, matched to the plan name in
+  `/v1/account/quota`). Off by default — a key can call models the plan
+  excludes. With no readable plan the filter **fails open** (shows
+  everything) rather than emptying the picker.
 - **Desktop statusbar ticker** (`kenari-usage/` companion): plan quota
   % left for 7d/30d with a live reset countdown in `statusBar.right`,
   rotating windows, 2-minute poll, click-to-refresh, full lines in the
@@ -148,6 +154,38 @@ KENARI_API_KEY=kn-...
 |---|---|---|
 | `KENARI_API_KEY` | yes | Kenari API key (`kn-...`) |
 | `KENARI_BASE_URL` | no | Override the default endpoint (proxy / self-hosted relay) |
+| `KENARI_PLAN_ONLY` | no | `1` = list only models the active plan covers. Default off; see below. |
+
+### `KENARI_PLAN_ONLY` — show only plan-covered models
+
+Your key and your plan are different gates: a key may permit models the
+plan excludes, and picking one of those fails or bills differently. This
+toggle trims the picker to the **plan's** entitlement list.
+
+```bash
+KENARI_PLAN_ONLY=1                       # in ~/.hermes/.env
+```
+
+```yaml
+# or persist it in ~/.hermes/config.yaml (env wins when both are set)
+kenari:
+  plan_only: true
+```
+
+| Value | Picker shows |
+|---|---|
+| unset / `0` (default) | every tool-capable chat model your **key** can call |
+| `1` | those, narrowed to the **active plan's** `scope_models` |
+
+Live example on an Indie plan: 70 key-callable models → 34 plan-covered;
+the 36 dropped include `claude-opus-5`, `gpt-5-6-sol`, and several
+`:free` routes the plan does not cover.
+
+Behaviour when there is **no active plan** — a scoped key that 403s on
+`/v1/account/quota`, no subscription, an unknown plan name, or an
+unreachable plan catalog — is to **not filter**. Over-listing costs a
+clear API error; hiding every model would leave an unusable picker. An
+unparseable toggle value is likewise treated as unset, never guessed.
 
 ## Use
 

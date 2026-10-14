@@ -654,5 +654,259 @@ class TestFetchAccountUsage(unittest.TestCase):
             self.assertIsNone(self.profile.fetch_account_usage(api_key="k"))
 
 
+class TestPlanOnlyFiltering(unittest.TestCase):
+    """`KENARI_PLAN_ONLY` / config `plan_only` — show only plan-covered models.
+
+    The load-bearing case is the one with NO active plan: the filter must
+    fail OPEN (show everything the key can call). Hiding models there would
+    empty the picker, so that behaviour is asserted explicitly.
+    """
+
+    PLANS = [
+        {"id": "plan-ringan-v3", "name": "Indie",
+         "scope_models": ["step-3-7-flash:free", "hy3:free"]},
+        {"id": "plan-agensi-v3", "name": "Agensi",
+         "scope_models": ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"]},
+    ]
+
+    def setUp(self):
+        self.module, self.profile = conftest_stub.load_plugin()
+        self.module._CATALOG_CACHE = [
+            "step-3-7-flash", "step-3-7-flash:free", "hy3:free", "gpt-oss-20b",
+        ]
+        self.module._KEY_ALLOW_CACHE = {}
+        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": ""})
+        self._env = patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        os.environ.pop("KENARI_PLAN_ONLY", None)
+
+    def tearDown(self):
+        self._env.stop()
+        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": ""})
+
+    def _opener(self, plan_name, *, quota_status=200, plans=None):
+        """Fake transport: catalog, quota, and plans endpoints."""
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/chat/completions"):
+                raise _FakeHTTPError(
+                    b'{"error": {"code": "bad_request", "message": '
+                    b'"Allowed models: step-3-7-flash:free, hy3:free, gpt-oss-20b"}}',
+                    400,
+                )
+            if url.endswith("/account/quota"):
+                if quota_status != 200:
+                    raise _FakeHTTPError(b"forbidden", quota_status)
+                return _FakeResponse(json.dumps(
+                    {"plan": {"name": plan_name}} if plan_name else {}
+                ).encode())
+            if url.endswith("/api/plans"):
+                return _FakeResponse(json.dumps(plans if plans is not None else self.PLANS).encode())
+            return _FakeResponse(_catalog_payload([]))
+        return opener
+
+    # ── toggle resolution ───────────────────────────────────────────────
+
+    def test_toggle_defaults_off(self):
+        self.assertFalse(self.module._plan_only_enabled())
+
+    def test_toggle_env_truthy(self):
+        for raw in ("1", "true", "TRUE", "yes", "on"):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": raw}):
+                self.assertTrue(self.module._plan_only_enabled(), raw)
+
+    def test_toggle_env_falsy(self):
+        for raw in ("0", "false", "no", "off"):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": raw}):
+                self.assertFalse(self.module._plan_only_enabled(), raw)
+
+    def test_toggle_env_garbage_is_unset_not_guessed(self):
+        # A typo must not silently hide models.
+        with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "maybe"}):
+            self.assertFalse(self.module._plan_only_enabled())
+
+    def test_toggle_reads_config_when_env_unset(self):
+        fake_cfg = {"kenari": {"plan_only": True}}
+        with patch("hermes_cli.config.load_config", lambda: fake_cfg):
+            self.assertTrue(self.module._plan_only_enabled())
+
+    def test_toggle_env_beats_config(self):
+        fake_cfg = {"kenari": {"plan_only": True}}
+        with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "0"}):
+            with patch("hermes_cli.config.load_config", lambda: fake_cfg):
+                self.assertFalse(self.module._plan_only_enabled())
+
+    # ── filtering ───────────────────────────────────────────────────────
+
+    def test_on_filters_to_plan_scope(self):
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie")):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        # key allows 3, plan Indie covers 2
+        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free"])
+
+    def test_off_shows_key_scope(self):
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie")):
+            models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(
+            models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"]
+        )
+
+    def test_higher_plan_covers_more(self):
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Agensi")):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertIn("gpt-oss-20b", models)
+
+    # ── the no-active-plan case (must fail OPEN) ────────────────────────
+
+    def test_no_plan_in_quota_shows_everything(self):
+        """Quota readable but carries no plan (no active subscription)."""
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("")):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(
+            models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"],
+            "no active plan must show all key-allowed models, never none",
+        )
+
+    def test_scoped_key_403_on_quota_shows_everything(self):
+        """The model-scoped-key case: /account/quota 403s -> no filter."""
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie", quota_status=403)):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-scoped")
+        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"])
+
+    def test_unknown_plan_name_shows_everything(self):
+        """Quota names a plan /api/plans does not list."""
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Mystery")):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(len(models), 3)
+
+    def test_plan_with_empty_scope_shows_everything(self):
+        mod = sys.modules["hermes_cli.urllib_security"]
+        plans = [{"id": "x", "name": "Indie", "scope_models": []}]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie", plans=plans)):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(len(models), 3)
+
+    def test_plan_endpoint_unreachable_shows_everything(self):
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/chat/completions"):
+                raise _FakeHTTPError(
+                    b'{"error": {"code": "bad_request", "message": '
+                    b'"Allowed models: step-3-7-flash:free, hy3:free, gpt-oss-20b"}}',
+                    400,
+                )
+            if url.endswith("/account/quota"):
+                return _FakeResponse(json.dumps({"plan": {"name": "Indie"}}).encode())
+            raise OSError("plans endpoint down")
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(len(models), 3)
+
+    def test_no_api_key_never_calls_plan_endpoints(self):
+        """Without a key there is nothing to scope — and no network at all."""
+        seen = []
+
+        def opener(req, timeout=8.0):
+            seen.append(req.full_url)
+            raise AssertionError("no network without a key")
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models()
+        self.assertEqual(len(models), 4)
+        self.assertEqual(seen, [])
+
+    def test_plan_request_sends_user_agent(self):
+        """`/api/plans` is behind Cloudflare: a UA-less GET gets Error 1010."""
+        seen = {}
+
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/chat/completions"):
+                raise _FakeHTTPError(
+                    b'{"error": {"code": "bad_request", "message": '
+                    b'"Allowed models: step-3-7-flash:free, hy3:free, gpt-oss-20b"}}',
+                    400,
+                )
+            if url.endswith("/account/quota"):
+                return _FakeResponse(json.dumps({"plan": {"name": "Indie"}}).encode())
+            if url.endswith("/api/plans"):
+                seen["ua"] = req.get_header("User-agent") or req.headers.get("User-agent")
+                return _FakeResponse(json.dumps(self.PLANS).encode())
+            return _FakeResponse(_catalog_payload([]))
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertIn("hermes-kenari-plugin", seen.get("ua", ""))
+        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free"])
+
+    def test_scope_cache_avoids_refetch(self):
+        quota_calls = []
+
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/chat/completions"):
+                raise _FakeHTTPError(
+                    b'{"error": {"code": "bad_request", "message": '
+                    b'"Allowed models: step-3-7-flash:free, hy3:free, gpt-oss-20b"}}',
+                    400,
+                )
+            if url.endswith("/account/quota"):
+                quota_calls.append(url)
+                return _FakeResponse(json.dumps({"plan": {"name": "Indie"}}).encode())
+            if url.endswith("/api/plans"):
+                return _FakeResponse(json.dumps(self.PLANS).encode())
+            return _FakeResponse(_catalog_payload([]))
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                self.profile.fetch_models(api_key="kn-full")
+                self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(len(quota_calls), 1, "plan scope should be cached")
+
+    def test_failure_cached_does_not_retry_storm(self):
+        """A 403 must not be re-probed on every picker open."""
+        quota_calls = []
+
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/chat/completions"):
+                raise _FakeHTTPError(
+                    b'{"error": {"code": "bad_request", "message": '
+                    b'"Allowed models: step-3-7-flash:free, hy3:free, gpt-oss-20b"}}',
+                    400,
+                )
+            if url.endswith("/account/quota"):
+                quota_calls.append(url)
+                raise _FakeHTTPError(b"forbidden", 403)
+            return _FakeResponse(_catalog_payload([]))
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", opener):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                self.profile.fetch_models(api_key="kn-scoped")
+                self.profile.fetch_models(api_key="kn-scoped")
+        self.assertEqual(len(quota_calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

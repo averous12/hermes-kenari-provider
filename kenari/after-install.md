@@ -23,3 +23,30 @@ Kenari provider installed.
 
    - `KENARI_BASE_URL` — point at a proxy or self-hosted relay instead
      of the default `https://kenari.id/v1` endpoint.
+
+   - `KENARI_PLAN_ONLY=1` — **show only plan-covered models.**
+
+     Off by default: the picker lists everything your KEY can call, which
+     may include models your plan does not cover. Turn this on to trim it
+     to the active plan's entitlement list instead.
+
+     ```
+     KENARI_PLAN_ONLY=1
+     ```
+
+     Or persist it in `~/.hermes/config.yaml` (the env var wins when both
+     are set):
+
+     ```yaml
+     kenari:
+       plan_only: true
+     ```
+
+     Resolution order: `KENARI_PLAN_ONLY` → `kenari.plan_only` → off. An
+     unparseable value counts as *unset* rather than a guess, so a typo
+     can never silently hide models.
+
+     No active plan (or a model-scoped key that Kenari 403s on
+     `/account/quota`) means **no filtering** — the picker shows
+     everything the key allows. Hiding models with nothing to compare
+     against would empty the picker.

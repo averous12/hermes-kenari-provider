@@ -179,6 +179,14 @@ def install_stubs(*, legacy: bool = False) -> dict[str, Any]:
     hermes_cli_mod.__version__ = "0.0.0-test"
     hermes_cli_mod.urllib_security = security_mod
 
+    # ``hermes_cli.config.load_config`` — the provider reads `kenari.plan_only`
+    # from it. Stubbed to an empty config so tests exercise the default path;
+    # individual tests patch it with `patch("hermes_cli.config.load_config")`.
+    config_mod = types.ModuleType("hermes_cli.config")
+    config_mod.load_config = lambda: {}
+    config_mod.load_config_readonly = lambda: {}
+    hermes_cli_mod.config = config_mod
+
     account_mod = types.ModuleType("agent.account_usage")
     account_mod.AccountUsageSnapshot = StubAccountUsageSnapshot
     account_mod.AccountUsageWindow = StubAccountUsageWindow
@@ -220,6 +228,7 @@ def install_stubs(*, legacy: bool = False) -> dict[str, Any]:
     sys.modules["providers.base"] = base_mod
     sys.modules["hermes_cli"] = hermes_cli_mod
     sys.modules["hermes_cli.urllib_security"] = security_mod
+    sys.modules["hermes_cli.config"] = config_mod
     sys.modules["agent"] = agent_mod
     sys.modules["agent.account_usage"] = account_mod
     sys.modules["agent.usage_pricing"] = pricing_mod

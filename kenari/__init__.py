@@ -63,7 +63,9 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 import re
+import time
 import urllib.error
 import urllib.request
 from decimal import Decimal
@@ -81,8 +83,14 @@ BASE_URL_ENV = "KENARI_BASE_URL"
 OPENAI_BASE_URL = "https://kenari.id/v1"
 MODELS_URL = "https://kenari.id/v1/models"
 PUBLIC_PRICING_URL = "https://kenari.id/api/public/pricing"
+PLANS_URL = "https://kenari.id/api/plans"
 SIGNUP_URL = "https://kenari.id"
 DOCS_URL = "https://kenari.id/docs"
+
+# Sent on every plugin request. Required in practice: `/api/plans` is behind
+# Cloudflare and returns Error 1010 to a UA-less client, while Kenari's `/v1`
+# routes tolerate one. One constant so no call site can forget it.
+_USER_AGENT = "hermes-kenari-plugin"
 
 # Indicative USD conversion for cost labels (USD/IDR ~17,900, Oct 2026).
 # amount_usd is approximate; the exact Rp figure is always in the label.
@@ -114,6 +122,133 @@ _MODEL_META: dict[str, dict[str, Any]] = {}
 # Full public tool-capable chat list (key-independent). The per-key
 # scope filter is applied on top per call, with its own cache.
 _CATALOG_CACHE: list[str] | None = None
+
+# ── "plan-covered only" toggle ───────────────────────────────────────────
+# When on, fetch_models drops routes the account's ACTIVE PLAN does not
+# cover (`scope_models` from /api/plans, matched to the plan name in
+# /v1/account/quota). Off by default: the picker then shows everything the
+# KEY can call, which can include models the plan excludes.
+#
+# Order of resolution (first wins):
+#   1. KENARI_PLAN_ONLY env var  ("1"/"true"/"yes" / "0"/"false"/"no")
+#   2. config.yaml  →  kenari: { plan_only: true }
+#   3. default: False
+_PLAN_ONLY_ENV = "KENARI_PLAN_ONLY"
+_PLAN_ONLY_CONFIG_KEY = "plan_only"
+
+# Plan scope is per-account and changes rarely; cache the resolved set.
+# `models=None` means "resolved: no plan readable" and is cached on the same
+# TTL — otherwise a scoped key that 403s would re-probe on every picker open.
+_PLAN_SCOPE_CACHE: dict[str, Any] = {"at": 0.0, "models": None, "plan": "", "resolved": False}
+_PLAN_SCOPE_TTL = 600.0
+
+
+def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
+    """GET *url* as JSON, or ``None`` on any failure (never raises).
+
+    Best-effort by design: the plan-scope filter treats an unreadable
+    response the same as "no plan", so a hiccup must not surface as an
+    error to the picker.
+
+    Always sends a ``User-Agent``. ``/api/plans`` sits behind Cloudflare and
+    answers a UA-less client with Error 1010 ("blocked based on your
+    browser's signature"), even though Kenari's ``/v1`` routes do not.
+    """
+    try:
+        send = {"Accept": "application/json", "User-Agent": _USER_AGENT}
+        send.update(headers)
+        req = urllib.request.Request(url, headers=send)
+        with _url_opener()(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode(errors="replace"))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("kenari: GET %s failed: %s", url, exc)
+        return None
+
+
+def _plan_only_enabled() -> bool:
+    """Is the "show only plan-covered models" toggle on?
+
+    Env beats config.yaml beats the default (off). Unparseable values are
+    treated as unset rather than guessed at, so a typo can't silently hide
+    models.
+    """
+    raw = (os.getenv(_PLAN_ONLY_ENV, "") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    try:
+        from hermes_cli.config import load_config  # type: ignore
+
+        cfg = load_config() or {}
+        section = cfg.get("kenari") if isinstance(cfg, dict) else None
+        if isinstance(section, dict):
+            value = section.get(_PLAN_ONLY_CONFIG_KEY)
+            if isinstance(value, bool):
+                return value
+    except Exception:
+        pass
+    return False
+
+
+def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | None, str]:
+    """``(covered_model_ids, plan_name)`` for the account's active plan.
+
+    ``scope_models`` is the plan's ENTITLEMENT list (models the plan lets
+    you call) — distinct from ``free_cache_models``, which only marks free
+    cache reads. Read from the public ``/api/plans`` and matched to the
+    active plan name in ``/v1/account/quota``.
+
+    Returns ``(None, "")`` whenever the plan cannot be established — no
+    key, a model-scoped key that 403s on ``/account/quota``, no active
+    subscription, or an unreachable catalogue. A caller must treat ``None``
+    as "do not filter": with no plan to compare against, hiding models
+    would empty the picker.
+    """
+    if not api_key:
+        return (None, "")
+    now = time.monotonic()
+    if _PLAN_SCOPE_CACHE["resolved"] and (now - _PLAN_SCOPE_CACHE["at"]) < _PLAN_SCOPE_TTL:
+        cached = _PLAN_SCOPE_CACHE["models"]
+        return (set(cached) if cached is not None else None, str(_PLAN_SCOPE_CACHE["plan"]))
+
+    def _remember(models: set[str] | None, plan: str) -> tuple[set[str] | None, str]:
+        _PLAN_SCOPE_CACHE.update(
+            {"at": now, "models": models, "plan": plan, "resolved": True}
+        )
+        return (models, plan)
+
+    try:
+        plan_name = ""
+        quota = _get_json(
+            f"{OPENAI_BASE_URL}/account/quota",
+            {"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            timeout,
+        )
+        if isinstance(quota, dict):
+            plan_name = str((quota.get("plan") or {}).get("name", "") or "")
+        if not plan_name:
+            # 403 (scoped key) or no subscription — no plan to filter by.
+            return _remember(None, "")
+
+        plans = _get_json(
+            PLANS_URL, {"Accept": "application/json"}, timeout
+        )
+        if not isinstance(plans, list):
+            return _remember(None, plan_name)
+        want = plan_name.strip().lower()
+        plan = next(
+            (p for p in plans if str(p.get("name", "")).strip().lower() == want), None
+        )
+        if plan is None:
+            return _remember(None, plan_name)
+        covered = {str(m) for m in (plan.get("scope_models") or [])}
+        if not covered:
+            return _remember(None, plan_name)
+        return _remember(covered, plan_name)
+    except Exception as exc:  # noqa: BLE001 - filtering is best-effort
+        logger.debug("kenari: plan scope unavailable: %s", exc)
+        return _remember(None, "")
 
 # Live per-model capabilities in the canonical model_overrides schema,
 # refreshed from the catalog on every successful fetch. Merged OVER the
@@ -1166,7 +1301,34 @@ class KenariProfile(ProviderProfile):
                     return self._inherited_fetch(
                         api_key=api_key, base_url=base_url, timeout=timeout
                     )
-                return scoped
+                models = scoped
+
+        # "Show only plan-covered models": drop routes the active plan does
+        # not cover. No plan readable (scoped key 403, no subscription) means
+        # no filter — emptying the picker would be worse than over-listing.
+        if _plan_only_enabled():
+            covered, plan_name = _fetch_active_plan_scope(
+                (api_key or "").strip(), timeout
+            )
+            if covered is not None:
+                kept = [m for m in models if m in covered]
+                if kept:
+                    logger.debug(
+                        "kenari: plan %s covers %d of %d listed models",
+                        plan_name, len(kept), len(models),
+                    )
+                    models = kept
+                else:
+                    logger.debug(
+                        "kenari: plan %s covers none of the listed models — "
+                        "not filtering", plan_name,
+                    )
+            else:
+                logger.debug(
+                    "kenari: plan-only is on but no active plan is readable — "
+                    "showing all %d allowed models", len(models),
+                )
+
         return models
 
     def _inherited_fetch(
