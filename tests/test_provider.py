@@ -1019,5 +1019,92 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         self.assertEqual(len(quota_calls), 1)
 
 
+class TestFreeCacheOrdering(unittest.TestCase):
+    """Free-cache models lead the list, then alphabetical."""
+
+    def setUp(self):
+        self.module, self.profile = conftest_stub.load_plugin()
+
+    def test_free_cache_models_come_first(self):
+        models = ["aaa-model", "deepseek-v4-1-flash", "mmm-model", "mimo-v2-6-flash"]
+        out = self.module._sort_models_free_cache_first(
+            models, {"deepseek-v4-1-flash", "mimo-v2-6-flash"}
+        )
+        self.assertEqual(
+            out,
+            ["deepseek-v4-1-flash", "mimo-v2-6-flash", "aaa-model", "mmm-model"],
+        )
+
+    def test_alphabetical_within_each_group(self):
+        models = ["zeta", "beta", "gamma", "alpha"]
+        out = self.module._sort_models_free_cache_first(models, {"zeta", "beta"})
+        self.assertEqual(out, ["beta", "zeta", "alpha", "gamma"])
+
+    def test_no_free_cache_leaves_alphabetical(self):
+        models = ["c", "a", "b"]
+        self.assertEqual(self.module._sort_models_free_cache_first(models, set()), ["a", "b", "c"])
+
+    def test_free_route_matches_its_base_id(self):
+        """`:free` counts as free-cache when the plan lists the base model."""
+        models = ["zzz", "deepseek-v4-flash:free", "aaa"]
+        out = self.module._sort_models_free_cache_first(models, {"deepseek-v4-flash"})
+        self.assertEqual(out[0], "deepseek-v4-flash:free")
+
+    def test_sort_is_stable_for_unknown_ids(self):
+        # Every input survives exactly once — the sort must not drop rows.
+        models = ["b", "a", "c", "d"]
+        out = self.module._sort_models_free_cache_first(models, {"c"})
+        self.assertEqual(sorted(out), sorted(models))
+        self.assertEqual(len(out), len(models))
+
+    def test_no_api_key_makes_no_network_call(self):
+        """Sorting needs plan data, but with no key there is nothing to fetch."""
+        seen = []
+
+        def opener(req, timeout=8.0):
+            seen.append(req.full_url)
+            raise AssertionError("no network without a key")
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        self.module._CATALOG_CACHE = ["b-model", "a-model"]
+        self.module._KEY_ALLOW_CACHE = {}
+        self.module._PLAN_SCOPE_CACHE.update(
+            {"at": 0.0, "models": None, "plan": "", "free_cache": set(), "resolved": False}
+        )
+        with patch.object(self.module, "open_credentialed_url", opener, create=True):
+            with patch.object(mod, "open_credentialed_url", opener):
+                self.profile.fetch_models()
+        self.assertEqual(seen, [])
+
+    def test_ordering_applies_with_plan_only_off(self):
+        """Sorting is independent of the filter toggle."""
+        fake_plans = [
+            {"name": "Indie",
+             "scope_models": ["a-model", "b-model"],
+             "free_cache_models": ["b-model"]},
+        ]
+
+        def opener(req, timeout=8.0):
+            url = req.full_url
+            if url.endswith("/account/quota"):
+                return _FakeResponse(json.dumps({"plan": {"name": "Indie"}}).encode())
+            if url.endswith("/api/plans"):
+                return _FakeResponse(json.dumps(fake_plans).encode())
+            return _FakeResponse(_catalog_payload([]))
+
+        mod = sys.modules["hermes_cli.urllib_security"]
+        self.module._CATALOG_CACHE = ["a-model", "b-model", "c-model"]
+        self.module._KEY_ALLOW_CACHE = {}
+        self.module._PLAN_SCOPE_CACHE.update(
+            {"at": 0.0, "models": None, "plan": "", "free_cache": set(), "resolved": False}
+        )
+        with patch.object(self.module, "_plan_only_enabled", lambda: False):
+            with patch.object(mod, "open_credentialed_url", opener):
+                with patch.dict(os.environ, {"KENARI_API_KEY": "kn-full"}):
+                    models = self.profile.fetch_models(api_key="kn-full")
+        # b-model is free-cache -> leads; the rest stay alphabetical.
+        self.assertEqual(models, ["b-model", "a-model", "c-model"])
+
+
 if __name__ == "__main__":
     unittest.main()

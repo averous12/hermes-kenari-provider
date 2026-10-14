@@ -157,8 +157,33 @@ _PLUGIN_SETTINGS_PATH = _PLAN_ONLY_SETTINGS_PATHS[0]
 # Plan scope is per-account and changes rarely; cache the resolved set.
 # `models=None` means "resolved: no plan readable" and is cached on the same
 # TTL — otherwise a scoped key that 403s would re-probe on every picker open.
-_PLAN_SCOPE_CACHE: dict[str, Any] = {"at": 0.0, "models": None, "plan": "", "resolved": False}
+_PLAN_SCOPE_CACHE: dict[str, Any] = {
+    "at": 0.0, "models": None, "plan": "", "free_cache": set(), "resolved": False,
+}
 _PLAN_SCOPE_TTL = 600.0
+
+
+def _sort_models_free_cache_first(models: list[str], free_cache: set[str]) -> list[str]:
+    """Free-cache models first, then alphabetical within each group.
+
+    The picker renders a provider's models in the order handed to it (only
+    de-duplicating), and caps the un-searched list at
+    ``DEFAULT_VISIBLE_PER_PROVIDER`` — so the front of this list is what the
+    user actually sees. Putting the models whose cache reads are free on the
+    active plan first keeps the cheapest-to-use rows in view; everything else
+    stays alphabetical.
+
+    A ``:free`` route matches its base id, so ``x:free`` counts as free-cache
+    when the plan lists ``x``.
+    """
+    base_free = {m.split(":", 1)[0] for m in free_cache}
+    base_free |= set(free_cache)
+
+    def rank(model_id: str) -> tuple[int, str]:
+        is_free = model_id in base_free or model_id.split(":", 1)[0] in base_free
+        return (0 if is_free else 1, model_id)
+
+    return sorted(models, key=rank)
 
 
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
@@ -302,32 +327,47 @@ def _minimal_yaml_bool_tree(text: str) -> dict[str, Any] | None:
     return root
 
 
-def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | None, str]:
-    """``(covered_model_ids, plan_name)`` for the account's active plan.
+def _fetch_plan_lists(api_key: str, timeout: float) -> dict[str, Any]:
+    """The active plan's model lists, resolved once and cached.
 
-    ``scope_models`` is the plan's ENTITLEMENT list (models the plan lets
-    you call) — distinct from ``free_cache_models``, which only marks free
-    cache reads. Read from the public ``/api/plans`` and matched to the
-    active plan name in ``/v1/account/quota``.
+    Returns ``{"plan": str, "covered": set|None, "free_cache": set, "resolved": bool}``.
+    ``covered`` is ``scope_models`` — the entitlement list — and ``free_cache``
+    is ``free_cache_models``, the subset whose cache reads bill nothing. Both
+    come from the public ``/api/plans``, matched to the active plan name in
+    ``/v1/account/quota``.
 
-    Returns ``(None, "")`` whenever the plan cannot be established — no
-    key, a model-scoped key that 403s on ``/account/quota``, no active
-    subscription, or an unreachable catalogue. A caller must treat ``None``
-    as "do not filter": with no plan to compare against, hiding models
-    would empty the picker.
+    Every list is best-effort: no key, a model-scoped key that 403s on
+    ``/account/quota``, no subscription, or an unreachable catalogue all
+    resolve to empty/None, which callers must read as "do not filter" rather
+    than "hide everything".
     """
+    empty: dict[str, Any] = {"plan": "", "covered": None, "free_cache": set(), "resolved": False}
     if not api_key:
-        return (None, "")
+        return empty
+
     now = time.monotonic()
     if _PLAN_SCOPE_CACHE["resolved"] and (now - _PLAN_SCOPE_CACHE["at"]) < _PLAN_SCOPE_TTL:
-        cached = _PLAN_SCOPE_CACHE["models"]
-        return (set(cached) if cached is not None else None, str(_PLAN_SCOPE_CACHE["plan"]))
+        cached_covered = _PLAN_SCOPE_CACHE["models"]
+        return {
+            "plan": str(_PLAN_SCOPE_CACHE["plan"]),
+            "covered": set(cached_covered) if cached_covered is not None else None,
+            "free_cache": set(_PLAN_SCOPE_CACHE.get("free_cache") or ()),
+            "resolved": True,
+        }
 
-    def _remember(models: set[str] | None, plan: str) -> tuple[set[str] | None, str]:
+    result = dict(empty)
+
+    def _remember(covered: set[str] | None, plan: str, free_cache: set[str]) -> dict[str, Any]:
         _PLAN_SCOPE_CACHE.update(
-            {"at": now, "models": models, "plan": plan, "resolved": True}
+            {
+                "at": now,
+                "models": covered,
+                "plan": plan,
+                "free_cache": free_cache,
+                "resolved": True,
+            }
         )
-        return (models, plan)
+        return {"plan": plan, "covered": covered, "free_cache": free_cache, "resolved": True}
 
     try:
         plan_name = ""
@@ -339,27 +379,35 @@ def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | N
         if isinstance(quota, dict):
             plan_name = str((quota.get("plan") or {}).get("name", "") or "")
         if not plan_name:
-            # 403 (scoped key) or no subscription — no plan to filter by.
-            return _remember(None, "")
+            # 403 (scoped key) or no subscription — nothing to compare against.
+            return _remember(None, "", set())
 
-        plans = _get_json(
-            PLANS_URL, {"Accept": "application/json"}, timeout
-        )
+        plans = _get_json(PLANS_URL, {"Accept": "application/json"}, timeout)
         if not isinstance(plans, list):
-            return _remember(None, plan_name)
+            return _remember(None, plan_name, set())
         want = plan_name.strip().lower()
         plan = next(
             (p for p in plans if str(p.get("name", "")).strip().lower() == want), None
         )
         if plan is None:
-            return _remember(None, plan_name)
+            return _remember(None, plan_name, set())
+
         covered = {str(m) for m in (plan.get("scope_models") or [])}
-        if not covered:
-            return _remember(None, plan_name)
-        return _remember(covered, plan_name)
+        free_cache = {str(m) for m in (plan.get("free_cache_models") or [])}
+        return _remember(covered or None, plan_name, free_cache)
     except Exception as exc:  # noqa: BLE001 - filtering is best-effort
-        logger.debug("kenari: plan scope unavailable: %s", exc)
-        return _remember(None, "")
+        logger.debug("kenari: plan lists unavailable: %s", exc)
+        return result
+
+
+def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | None, str]:
+    """``(covered_model_ids, plan_name)`` for the account's active plan.
+
+    Thin view over :func:`_fetch_plan_lists`. ``None`` means "no plan readable
+    — do not filter".
+    """
+    lists = _fetch_plan_lists(api_key, timeout)
+    return (lists["covered"], str(lists["plan"]))
 
 # Live per-model capabilities in the canonical model_overrides schema,
 # refreshed from the catalog on every successful fetch. Merged OVER the
@@ -1417,10 +1465,9 @@ class KenariProfile(ProviderProfile):
         # "Show only plan-covered models": drop routes the active plan does
         # not cover. No plan readable (scoped key 403, no subscription) means
         # no filter — emptying the picker would be worse than over-listing.
+        lists = _fetch_plan_lists((api_key or "").strip(), timeout)
         if _plan_only_enabled():
-            covered, plan_name = _fetch_active_plan_scope(
-                (api_key or "").strip(), timeout
-            )
+            covered, plan_name = lists["covered"], str(lists["plan"])
             if covered is not None:
                 kept = [m for m in models if m in covered]
                 if kept:
@@ -1439,6 +1486,13 @@ class KenariProfile(ProviderProfile):
                     "kenari: plan-only is on but no active plan is readable — "
                     "showing all %d allowed models", len(models),
                 )
+
+        # Free-cache rows lead (then alphabetical), because the picker shows
+        # this order verbatim and truncates at DEFAULT_VISIBLE_PER_PROVIDER —
+        # so the head of the list decides what is reachable without searching.
+        free_cache = lists["free_cache"] if isinstance(lists.get("free_cache"), set) else set()
+        if free_cache:
+            models = _sort_models_free_cache_first(models, free_cache)
 
         return models
 
