@@ -675,14 +675,19 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             "step-3-7-flash", "step-3-7-flash:free", "hy3:free", "gpt-oss-20b",
         ]
         self.module._KEY_ALLOW_CACHE = {}
-        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": ""})
+        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": "", "resolved": False})
         self._env = patch.dict(os.environ, {}, clear=False)
         self._env.start()
         os.environ.pop("KENARI_PLAN_ONLY", None)
+        # Isolate from the developer's real config.yaml — it may well have
+        # plan_only turned on, which would silently flip every expectation.
+        self._config = patch.object(self.module, "_load_config_file", lambda: {})
+        self._config.start()
 
     def tearDown(self):
+        self._config.stop()
         self._env.stop()
-        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": ""})
+        self.module._PLAN_SCOPE_CACHE.update({"at": 0.0, "models": None, "plan": "", "resolved": False})
 
     def _opener(self, plan_name, *, quota_status=200, plans=None):
         """Fake transport: catalog, quota, and plans endpoints."""
@@ -727,7 +732,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
 
     def test_toggle_reads_config_when_env_unset(self):
         fake_cfg = {"kenari": {"plan_only": True}}
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
 
     def test_toggle_reads_desktop_settings_form(self):
@@ -735,7 +740,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         fake_cfg = {
             "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": True}}}}
         }
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
 
     def test_desktop_form_beats_legacy_key(self):
@@ -743,14 +748,14 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": False}}}},
             "kenari": {"plan_only": True},
         }
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertFalse(self.module._plan_only_enabled())
 
     def test_returns_real_bool_never_none(self):
         """A falsy setting must return False, not None (an `or` chain leak)."""
-        with patch("hermes_cli.config.load_config_readonly", lambda: {"kenari": {"plan_only": False}}):
+        with patch.object(self.module, "_load_config_file", lambda: {"kenari": {"plan_only": False}}):
             self.assertIs(self.module._plan_only_enabled(), False)
-        with patch("hermes_cli.config.load_config_readonly", lambda: {}):
+        with patch.object(self.module, "_load_config_file", lambda: {}):
             self.assertIs(self.module._plan_only_enabled(), False)
 
     def test_reads_toggle_from_helper_plugin(self):
@@ -758,7 +763,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         fake_cfg = {
             "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": True}}}}
         }
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
 
     def test_helper_key_outranks_legacy_provider_key(self):
@@ -770,7 +775,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
                 }
             }
         }
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertFalse(self.module._plan_only_enabled())
 
     def test_legacy_provider_key_still_read(self):
@@ -778,7 +783,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         fake_cfg = {
             "plugins": {"entries": {"model-providers/kenari": {"settings": {"plan_only": True}}}}
         }
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
 
     def test_toggle_paths_all_target_the_plan_only_field(self):
@@ -788,15 +793,58 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             self.assertEqual(path[:2], ("plugins", "entries"))
             self.assertIn("kenari", path[2])
 
+    def test_config_read_does_not_depend_on_hermes_cli_config(self):
+        """The toggle must not need `hermes_cli.config` to be importable.
+
+        That import pulls in `hermes_yaml` (a repo-root module) which is not
+        always on sys.path when the plugin loader imports a provider; the
+        ImportError was swallowed and the toggle silently read as OFF, so the
+        plan filter never ran. Read config.yaml directly instead.
+        """
+        source = Path(self.module.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(
+            "hermes_cli.config", source,
+            "provider must not import hermes_cli.config for the toggle",
+        )
+
+    def test_minimal_yaml_fallback_reads_the_toggle(self):
+        """With no YAML library, the narrow fallback still finds the boolean."""
+        text = (
+            "plugins:\n"
+            "  entries:\n"
+            "    kenari-helper:\n"
+            "      settings:\n"
+            "        plan_only: true\n"
+            "model:\n"
+            "  default: step-3-7-flash:free\n"
+        )
+        tree = self.module._minimal_yaml_bool_tree(text)
+        self.assertIs(tree["plugins"]["entries"]["kenari-helper"]["settings"]["plan_only"], True)
+        path = ("plugins", "entries", "kenari-helper", "settings", "plan_only")
+        with patch.object(self.module, "_load_config_file", lambda: tree):
+            self.assertTrue(self.module._plan_only_enabled())
+
+    def test_minimal_yaml_fallback_ignores_comments_and_quotes(self):
+        text = 'plugins:  # root\n  entries:\n    "kenari-helper":\n      settings:\n        plan_only: false\n'
+        tree = self.module._minimal_yaml_bool_tree(text)
+        self.assertIs(tree["plugins"]["entries"]["kenari-helper"]["settings"]["plan_only"], False)
+
+    def test_unreadable_config_reads_as_unset_not_off(self):
+        """A missing file must return None (unset), so the caller can tell."""
+        with patch.object(self.module, "_load_config_file", lambda: None):
+            self.assertIsNone(
+                self.module._config_bool(("plugins", "entries", "kenari-helper", "settings", "plan_only"))
+            )
+
     def test_non_bool_setting_is_ignored(self):
         fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": "yes"}}}}}
-        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+        with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
             self.assertFalse(self.module._plan_only_enabled())
 
     def test_toggle_env_beats_config(self):
         fake_cfg = {"kenari": {"plan_only": True}}
         with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "0"}):
-            with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            with patch.object(self.module, "_load_config_file", lambda: fake_cfg):
                 self.assertFalse(self.module._plan_only_enabled())
 
     # ── filtering ───────────────────────────────────────────────────────

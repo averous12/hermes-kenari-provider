@@ -210,19 +210,96 @@ def _plan_only_enabled() -> bool:
 
 
 def _config_bool(path: tuple[str, ...]) -> bool | None:
-    """Nested ``config.yaml`` value at *path* when it is a real bool, else None."""
-    try:
-        from hermes_cli.config import load_config_readonly  # type: ignore
+    """Nested ``config.yaml`` value at *path* when it is a real bool, else None.
 
-        config = load_config_readonly() or {}
-        current: Any = config
-        for segment in path:
-            if not isinstance(current, dict) or segment not in current:
-                return None
-            current = current[segment]
-    except Exception:
+    Reads ``config.yaml`` directly rather than through the CLI's config
+    loader: that path pulls in ``hermes_yaml`` (a repo-root module), which is
+    not on ``sys.path`` in every runtime — a provider is imported by the
+    plugin loader with a different path than the CLI's. When it failed there,
+    the ImportError was swallowed and the toggle silently read as off, so the
+    plan filter never ran. The file is the same source of truth either way.
+
+    Never raises: an absent/unreadable config reads as "unset".
+    """
+    data = _load_config_file()
+    if data is None:
         return None
+    current: Any = data
+    for segment in path:
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
     return current if isinstance(current, bool) else None
+
+
+def _load_config_file() -> dict[str, Any] | None:
+    """``config.yaml`` from the Hermes home, or ``None``.
+
+    Tries the repo's own loader first (exact same parse as the CLI), then
+    whichever YAML library is importable, then a minimal built-in reader —
+    the setting is a single boolean, so a strict fallback is safe.
+    """
+    try:
+        from pathlib import Path
+
+        home = os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")
+        config_path = Path(home) / "config.yaml"
+        if not config_path.is_file():
+            return None
+        text = config_path.read_text(encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("kenari: cannot read config.yaml: %s", exc)
+        return None
+
+    for loader_name in ("hermes_yaml", "yaml"):
+        try:
+            module = __import__(loader_name)
+            loaded = module.safe_load(text)
+            if isinstance(loaded, dict):
+                return loaded
+        except Exception:
+            continue
+    try:
+        return _minimal_yaml_bool_tree(text)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("kenari: minimal config parse failed: %s", exc)
+        return None
+
+
+def _minimal_yaml_bool_tree(text: str) -> dict[str, Any] | None:
+    """Nested ``plugins.entries.<key>.settings.<field>: true|false`` reader.
+
+    A last-resort fallback for the single boolean this plugin needs, for a
+    runtime with no YAML library at all. Deliberately narrow: it only tracks
+    ``key:`` indentation and boolean leaves, and returns the tree shaped like
+    the parsed config so the caller walks the same path. Anything it does not
+    understand is skipped, and an unmatched path simply reads as unset.
+    """
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip().strip("'\"")
+        value = value.strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        if not stack:
+            return None
+        parent = stack[-1][1]
+        if value == "":
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        elif value.lower() in ("true", "false"):
+            parent[key] = value.lower() == "true"
+    return root
 
 
 def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | None, str]:
