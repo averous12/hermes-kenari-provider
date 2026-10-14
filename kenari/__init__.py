@@ -136,12 +136,57 @@ _CATALOG_CACHE: list[str] | None = None
 _PLAN_ONLY_ENV = "KENARI_PLAN_ONLY"
 _PLAN_ONLY_CONFIG_KEY = "plan_only"
 
-# Where the desktop settings form stores `plan_only` (the same path the
-# plugin-facing `ctx.get_config`/`set_config` use): saved by
-# `hermes_cli.plugins_settings.save_plugin_settings` ->
-# `plugins.entries.<plugin_id>.settings.<key>` in config.yaml.
+# Where the desktop settings form stores `plan_only`. `hermes_cli.plugins_settings`
+# keys `config_schema` entries by the plugin's REGISTRY KEY (category dir +
+# manifest name for a categorized install: `model-providers/kenari`), then saves
+# under `plugins.entries.<key>.settings.<field>`. Hard-coding "kenari" would miss
+# whenever the install directory differs from the manifest name, so resolve the
+# key from this file's own location and fall back to the manifest name.
 _PLUGIN_ID = "kenari"
-_PLUGIN_SETTINGS_PATH = ("plugins", "entries", _PLUGIN_ID, "settings", _PLAN_ONLY_CONFIG_KEY)
+
+# Install categories whose plugins are keyed `<category>/<name>`; a plugin
+# directly under the plugins root is keyed by its bare name.
+_PLUGIN_CATEGORY_DIRS = frozenset(
+    {"model-providers", "memory", "context_engine", "platforms", "cron_providers"}
+)
+
+
+def _plugin_registry_key() -> str:
+    """Registry key this plugin is installed under — the id settings are saved by.
+
+    Mirrors the key `hermes plugins list` / the desktop gateway report, which
+    is the path below the plugins root: ``plugins/model-providers/kenari`` ->
+    ``model-providers/kenari``, and a flat ``plugins/kenari`` -> ``kenari``.
+    The settings writer stores at ``plugins.entries.<key>.settings.<field>``,
+    so this must match exactly or the desktop switch would save somewhere the
+    provider never reads.
+
+    Reads the manifest name from ``plugin.yaml`` for the flat case, since the
+    directory may be named differently from the plugin.
+    """
+    try:
+        from pathlib import Path
+
+        here = Path(__file__).resolve().parent  # the plugin's own directory
+        parent = here.parent
+        # A categorized install sits one level under a category dir
+        # (`<root>/<category>/<name>`); a flat one sits directly under the root.
+        # `model-providers`, `memory`, `context_engine` are the known categories.
+        if parent.name in _PLUGIN_CATEGORY_DIRS:
+            return f"{parent.name}/{here.name}"
+    except Exception:
+        pass
+    return _PLUGIN_ID
+
+
+_PLUGIN_CATEGORY_DIRS = frozenset(
+    {"model-providers", "memory", "context_engine", "platforms", "cron_providers"}
+)
+
+
+_PLUGIN_SETTINGS_PATH = (
+    "plugins", "entries", _plugin_registry_key(), "settings", _PLAN_ONLY_CONFIG_KEY
+)
 
 # Plan scope is per-account and changes rarely; cache the resolved set.
 # `models=None` means "resolved: no plan readable" and is cached on the same

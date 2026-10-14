@@ -751,6 +751,23 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         with patch("hermes_cli.config.load_config_readonly", lambda: {}):
             self.assertIs(self.module._plan_only_enabled(), False)
 
+    def test_registry_key_matches_install_layout(self):
+        """The read path must equal the key the settings writer saves under.
+
+        A categorized install is keyed `<category>/<name>` (the desktop sends
+        `model-providers/kenari`); a wrong key means the switch saves where
+        the provider never looks.
+        """
+        key = self.module._plugin_registry_key()
+        self.assertTrue(
+            key == "kenari" or key.endswith("/kenari"),
+            f"unexpected registry key {key!r}",
+        )
+        # The path is built from that key, so they can never drift apart.
+        path = tuple(self.module._PLUGIN_SETTINGS_PATH)
+        self.assertEqual(path[2], key, f"path key {path[2]!r} != registry key {key!r}")
+        self.assertEqual(path, ("plugins", "entries", key, "settings", "plan_only"))
+
     def test_non_bool_setting_is_ignored(self):
         fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": "yes"}}}}}
         with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
