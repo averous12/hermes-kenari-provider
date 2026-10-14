@@ -1,6 +1,6 @@
-"""Kenari usage backend — serves the desktop statusbar chip.
+"""Kenari Helper backend — serves the desktop statusbar chip.
 
-Mounted at ``/api/plugins/kenari-usage/``. ``GET /usage-summary``
+Mounted at ``/api/plugins/kenari-helper/``. ``GET /usage-summary``
 calls the ``kenari`` provider profile's ``fetch_account_usage()`` (the
 same snapshot ``hermes usage`` renders) and returns the 7d/30d/free-
 today figures as JSON. Fails open: every error becomes a 200 with
@@ -154,7 +154,7 @@ def usage_summary() -> JSONResponse:
             )
         snapshot = fetch()
     except Exception as exc:  # never 500 the statusbar
-        log.debug("kenari-usage backend failed: %s", exc)
+        log.debug("kenari-helper backend failed: %s", exc)
         return JSONResponse({"ok": False, "reason": "fetch failed"}, status_code=200)
     if snapshot is None:
         hint = (
@@ -166,5 +166,5 @@ def usage_summary() -> JSONResponse:
     try:
         return JSONResponse(_snapshot_to_payload(snapshot), status_code=200)
     except Exception as exc:
-        log.debug("kenari-usage payload shaping failed: %s", exc)
+        log.debug("kenari-helper payload shaping failed: %s", exc)
         return JSONResponse({"ok": False, "reason": "shaping failed"}, status_code=200)

@@ -1,0 +1,25 @@
+name: kenari-helper
+kind: hermes-plugin
+version: 0.1.0
+description: Kenari desktop companion — statusbar quota ticker, model-pill badge, and provider settings
+author: avero
+
+# Rendered by the desktop under Capabilities → Plugins → Kenari Helper.
+# This plugin is installed FLAT (`plugins/kenari-helper`), so its registry key
+# is unqualified and the row is listed — a `model-providers/*` key is filtered
+# out by the desktop's HIDDEN_KEY_PREFIXES, which is why the toggle lives here
+# rather than on the provider.
+#
+# Saved to plugins.entries.kenari-helper.settings.plan_only, which the kenari
+# provider reads back (see _PLAN_ONLY_SETTINGS_PATHS in kenari/__init__.py).
+config_schema:
+  plan_only:
+    type: bool
+    label: Show only plan-covered models
+    description: >-
+      Limit the model picker to models your active Kenari plan covers.
+      Off: list everything your API key can call (a key may permit models
+      the plan excludes). If no active plan can be read — no subscription,
+      or a model-scoped key — the filter is skipped rather than hiding
+      every model. Takes effect on the next model list refresh.
+    default: false

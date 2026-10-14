@@ -4,18 +4,9 @@ version: 0.1.0
 description: Kenari.id — Indonesian AI gateway (OpenAI-compatible, IDR billing)
 author: avero
 
-# Settings surfaced in the desktop under Capabilities → Plugins → Kenari
-# (`hermes_cli.plugins_settings` renders these; a `bool` becomes a switch).
-# Saved to plugins.entries.kenari.settings.<key>, which the provider reads
-# back in `_plan_only_enabled()`. `KENARI_PLAN_ONLY` in .env overrides this.
-config_schema:
-  plan_only:
-    type: bool
-    label: Show only plan-covered models
-    description: >-
-      Limit the model picker to models your active Kenari plan covers.
-      Off: list everything your API key can call (a key may permit models
-      the plan excludes). If no active plan can be read — no subscription,
-      or a model-scoped key — the filter is skipped rather than hiding
-      every model.
-    default: false
+# NOTE: the `plan_only` toggle deliberately does NOT live here. A plugin under
+# `model-providers/` gets a `model-providers/<name>` registry key, and the
+# desktop's Plugins page filters that prefix out (HIDDEN_KEY_PREFIXES in
+# apps/desktop/src/store/agent-plugins.ts), so a config_schema declared here
+# would never render. It lives on the flat `kenari-helper` plugin instead,
+# which this provider reads back.

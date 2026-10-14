@@ -1,0 +1,7 @@
+{
+  "name": "kenari-helper",
+  "label": "Kenari Helper",
+  "description": "Kenari desktop companion — statusbar quota ticker and model-pill badge",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}

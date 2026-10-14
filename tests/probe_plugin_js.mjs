@@ -1,5 +1,5 @@
 /**
- * Runtime probe for kenari-usage/desktop/plugin.js.
+ * Runtime probe for kenari-helper/desktop/plugin.js.
  *
  * Loads the real plugin file under stub `react`, `react/jsx-runtime` and
  * `@hermes/plugin-sdk` modules so we can catch what static checks miss:
@@ -15,7 +15,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
-const pluginPath = path.resolve(here, '..', 'kenari-usage', 'desktop', 'plugin.js')
+const pluginPath = path.resolve(here, '..', 'kenari-helper', 'desktop', 'plugin.js')
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kenari-probe-'))
 

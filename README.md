@@ -9,7 +9,7 @@ picker to tool-capable chat routes the configured key may actually call,
 maps reasoning effort onto Kenari's `reasoning` object, prices responses
 in Rupiah from the live catalog, and surfaces wallet/plan/usage via
 `hermes usage`. It ships with a companion desktop plugin
-(`kenari-usage/`) that shows plan quota in the statusbar. It touches no
+(`kenari-helper/`) that shows plan quota in the statusbar. It touches no
 Hermes core files — discovery, credential resolution, `hermes doctor`,
 and the `--provider` flag all auto-wire from the provider registry.
 
@@ -50,7 +50,7 @@ and the `--provider` flag all auto-wire from the provider registry.
   `/v1/account/quota`). Off by default — a key can call models the plan
   excludes. With no readable plan the filter **fails open** (shows
   everything) rather than emptying the picker.
-- **Desktop statusbar ticker** (`kenari-usage/` companion): plan quota
+- **Desktop statusbar ticker** (`kenari-helper/` companion): plan quota
   % left for 7d/30d with a live reset countdown in `statusBar.right`,
   rotating windows, 2-minute poll, click-to-refresh, full lines in the
   tooltip. Plus a **composer-pill badge** for the active model when its
@@ -72,7 +72,7 @@ This repo ships **two independent plugins**. Install either or both.
 | Folder | What it is | Install into |
 |---|---|---|
 | repo root + `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/kenari` |
-| `kenari-usage/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-usage` |
+| `kenari-helper/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-helper` |
 
 They are separate because Hermes loads them through different registries:
 model providers load from `plugins/model-providers/` (or the flat
@@ -94,12 +94,12 @@ That's it. (The repo root carries the provider manifest plus a small
 ### Desktop chip — one command
 
 ```bash
-hermes plugins install averous12/hermes-kenari-provider/kenari-usage
+hermes plugins install averous12/hermes-kenari-provider/kenari-helper
 ```
 
 Then restart the desktop app (it copies `desktop/plugin.js` into
 `desktop-plugins/` on launch) and enable the chip under
-**Capabilities → Plugins → Kenari Usage**.
+**Capabilities → Plugins → Kenari Helper**.
 
 ### Equivalent forms
 
@@ -113,17 +113,17 @@ hermes plugins install https://github.com/averous12/hermes-kenari-provider.git/k
 pip install git+https://github.com/averous12/hermes-kenari-provider.git
 ```
 
-### Desktop chip (`kenari-usage/`)
+### Desktop chip (`kenari-helper/`)
 
 ```bash
-hermes plugins install averous12/hermes-kenari-provider/kenari-usage
+hermes plugins install averous12/hermes-kenari-provider/kenari-helper
 # or:
-hermes plugins install averous12/hermes-kenari-provider#kenari-usage
+hermes plugins install averous12/hermes-kenari-provider#kenari-helper
 ```
 
 Then restart the desktop app (it copies `desktop/plugin.js` into
 `desktop-plugins/` on launch) and enable the chip under
-**Capabilities → Plugins → Kenari Usage**.
+**Capabilities → Plugins → Kenari Helper**.
 
 ### Manual install (no git)
 
@@ -131,13 +131,13 @@ Then restart the desktop app (it copies `desktop/plugin.js` into
 git clone https://github.com/averous12/hermes-kenari-provider /tmp/kenari-plugin
 
 cp -r /tmp/kenari-plugin/kenari        ~/.hermes/plugins/model-providers/kenari
-cp -r /tmp/kenari-plugin/kenari-usage  ~/.hermes/plugins/kenari-usage
+cp -r /tmp/kenari-plugin/kenari-helper  ~/.hermes/plugins/kenari-helper
 ```
 
 Verify:
 
 ```bash
-hermes plugins list          # `kenari` and `kenari-usage`, both enabled
+hermes plugins list          # `kenari` and `kenari-helper`, both enabled
 hermes doctor                # provider health check
 hermes usage --provider kenari
 ```
@@ -162,9 +162,14 @@ Your key and your plan are different gates: a key may permit models the
 plan excludes, and picking one of those fails or bills differently. This
 toggle trims the picker to the **plan's** entitlement list.
 
-**Desktop:** Capabilities → Plugins → **Kenari** → *Show only
-plan-covered models* (declared as `config_schema.plan_only` in
-`kenari/plugin.yaml`, so it renders as a switch).
+**Desktop:** Capabilities → Plugins → **Kenari Helper** → *Show only
+plan-covered models*.
+
+It lives on `kenari-helper` rather than the provider on purpose: the
+desktop's Plugins page filters out any plugin keyed `model-providers/*`
+(`HIDDEN_KEY_PREFIXES` in `agent-plugins.ts`), so a `config_schema` on the
+provider would never render. `kenari-helper` installs flat, so its row is
+listed. The provider reads the setting back from the helper's namespace.
 
 **Headless / CLI:**
 
@@ -173,8 +178,8 @@ KENARI_PLAN_ONLY=1                       # in ~/.hermes/.env
 ```
 
 Resolution order: `KENARI_PLAN_ONLY` → the desktop switch
-(`plugins.entries.kenari.settings.plan_only`) → `kenari.plan_only` in
-`config.yaml` → off.
+(`plugins.entries.kenari-helper.settings.plan_only`) → `kenari.plan_only`
+in `config.yaml` → off.
 
 | Value | Picker shows |
 |---|---|
@@ -222,7 +227,7 @@ from the Kenari catalog and intersected with your key's scope.
 
 ## Desktop chip (7d/30d statusbar ticker)
 
-The `kenari-usage/` folder is a companion plugin with two desktop surfaces:
+The `kenari-helper/` folder is a companion plugin with two desktop surfaces:
 
 **Statusbar chip** (`statusBar.right`) — a live ticker showing **plan quota
 remaining** (not request counts):
@@ -261,13 +266,13 @@ badge both follow your current plan automatically.
 ```bash
 # 1. Install the companion (flat plugin dir — the desktop-half copier
 #    only scans plugins/<name>/, not plugins/model-providers/):
-cp -r kenari-usage ~/.hermes/plugins/kenari-usage
-# or: hermes plugins install averous12/hermes-kenari-provider/kenari-usage
+cp -r kenari-helper ~/.hermes/plugins/kenari-helper
+# or: hermes plugins install averous12/hermes-kenari-provider/kenari-helper
 
 # 2. Restart the desktop app (it copies the desktop half on launch),
 #    or run Rescan/Rebuild from the app if available.
 
-# 3. Enable the chip: Capabilities → Plugins → Kenari Usage → on.
+# 3. Enable the chip: Capabilities → Plugins → Kenari Helper → on.
 #    The backend needs the provider enabled (already done above).
 ```
 

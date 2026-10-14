@@ -136,57 +136,23 @@ _CATALOG_CACHE: list[str] | None = None
 _PLAN_ONLY_ENV = "KENARI_PLAN_ONLY"
 _PLAN_ONLY_CONFIG_KEY = "plan_only"
 
-# Where the desktop settings form stores `plan_only`. `hermes_cli.plugins_settings`
-# keys `config_schema` entries by the plugin's REGISTRY KEY (category dir +
-# manifest name for a categorized install: `model-providers/kenari`), then saves
-# under `plugins.entries.<key>.settings.<field>`. Hard-coding "kenari" would miss
-# whenever the install directory differs from the manifest name, so resolve the
-# key from this file's own location and fall back to the manifest name.
-_PLUGIN_ID = "kenari"
-
-# Install categories whose plugins are keyed `<category>/<name>`; a plugin
-# directly under the plugins root is keyed by its bare name.
-_PLUGIN_CATEGORY_DIRS = frozenset(
-    {"model-providers", "memory", "context_engine", "platforms", "cron_providers"}
+# Where the `plan_only` toggle is stored. It lives on the FLAT
+# `kenari-helper` plugin, not on this provider: a `model-providers/<name>`
+# registry key is filtered out of the desktop's Plugins page
+# (HIDDEN_KEY_PREFIXES in apps/desktop/src/store/agent-plugins.ts), so a
+# config_schema declared here could never render. The helper declares it and
+# `hermes_cli.plugins_settings` saves it under the helper's own key — plain
+# `config.yaml`, so reading another plugin's entry is just a lookup.
+_PLAN_ONLY_SETTINGS_PATHS: tuple[tuple[str, ...], ...] = (
+    ("plugins", "entries", "kenari-helper", "settings", _PLAN_ONLY_CONFIG_KEY),
+    # Tolerate a categorized install of the helper (key would be
+    # `<category>/kenari-helper`) so the toggle keeps working wherever a
+    # user drops it.
+    ("plugins", "entries", "hermes-plugin/kenari-helper", "settings", _PLAN_ONLY_CONFIG_KEY),
+    # Legacy: an earlier build declared the field on this provider.
+    ("plugins", "entries", "model-providers/kenari", "settings", _PLAN_ONLY_CONFIG_KEY),
 )
-
-
-def _plugin_registry_key() -> str:
-    """Registry key this plugin is installed under — the id settings are saved by.
-
-    Mirrors the key `hermes plugins list` / the desktop gateway report, which
-    is the path below the plugins root: ``plugins/model-providers/kenari`` ->
-    ``model-providers/kenari``, and a flat ``plugins/kenari`` -> ``kenari``.
-    The settings writer stores at ``plugins.entries.<key>.settings.<field>``,
-    so this must match exactly or the desktop switch would save somewhere the
-    provider never reads.
-
-    Reads the manifest name from ``plugin.yaml`` for the flat case, since the
-    directory may be named differently from the plugin.
-    """
-    try:
-        from pathlib import Path
-
-        here = Path(__file__).resolve().parent  # the plugin's own directory
-        parent = here.parent
-        # A categorized install sits one level under a category dir
-        # (`<root>/<category>/<name>`); a flat one sits directly under the root.
-        # `model-providers`, `memory`, `context_engine` are the known categories.
-        if parent.name in _PLUGIN_CATEGORY_DIRS:
-            return f"{parent.name}/{here.name}"
-    except Exception:
-        pass
-    return _PLUGIN_ID
-
-
-_PLUGIN_CATEGORY_DIRS = frozenset(
-    {"model-providers", "memory", "context_engine", "platforms", "cron_providers"}
-)
-
-
-_PLUGIN_SETTINGS_PATH = (
-    "plugins", "entries", _plugin_registry_key(), "settings", _PLAN_ONLY_CONFIG_KEY
-)
+_PLUGIN_SETTINGS_PATH = _PLAN_ONLY_SETTINGS_PATHS[0]
 
 # Plan scope is per-account and changes rarely; cache the resolved set.
 # `models=None` means "resolved: no plan readable" and is cached on the same
@@ -222,10 +188,9 @@ def _plan_only_enabled() -> bool:
 
     Resolution order (first wins):
       1. ``KENARI_PLAN_ONLY`` env var
-      2. the desktop's plugin settings form — declares ``plan_only`` in
-         ``kenari/plugin.yaml``, stored at
-         ``plugins.entries.kenari.settings.plan_only`` (same writer the
-         plugin-facing ``ctx.get_config``/``set_config`` use)
+      2. the desktop switch on the ``kenari-helper`` plugin — declared as
+         ``config_schema.plan_only`` in its ``plugin.yaml`` and stored at
+         ``plugins.entries.kenari-helper.settings.plan_only``
       3. legacy ``kenari.plan_only`` in ``config.yaml``
       4. default: False
 
@@ -237,13 +202,11 @@ def _plan_only_enabled() -> bool:
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    # Desktop settings form first (the documented control), then the legacy
-    # `kenari.plan_only` key. `or` would leak None as the return value, so
-    # pick the first non-None.
-    resolved = _config_bool(_PLUGIN_SETTINGS_PATH)
-    if resolved is None:
-        resolved = _config_bool(("kenari", _PLAN_ONLY_CONFIG_KEY))
-    return bool(resolved)
+    for path in _PLAN_ONLY_SETTINGS_PATHS:
+        resolved = _config_bool(path)
+        if resolved is not None:
+            return resolved
+    return bool(_config_bool(("kenari", _PLAN_ONLY_CONFIG_KEY)))
 
 
 def _config_bool(path: tuple[str, ...]) -> bool | None:

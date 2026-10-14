@@ -1,11 +1,11 @@
 /**
- * Kenari usage statusbar chip — a live ticker: quota left per window plus
- * how long until the weekly/monthly window resets.
+ * Kenari Helper — desktop companion: a statusbar quota ticker plus a
+ * composer-pill badge for cache-free models.
  *
- * Install: `<hermes home>/plugins/kenari-usage/` (the app copies the
- * desktop half to `desktop-plugins/kenari-usage/` on launch), then enable
+ * Install: `<hermes home>/plugins/kenari-helper/` (the app copies the
+ * desktop half to `desktop-plugins/kenari-helper/` on launch), then enable
  * it under Capabilities → Plugins. Data comes from the companion backend
- * (`dashboard/plugin_api.py` → `GET /api/plugins/kenari-usage/usage-summary`),
+ * (`dashboard/plugin_api.py` → `GET /api/plugins/kenari-helper/usage-summary`),
  * which reuses the kenari provider's own usage snapshot — the same figures
  * `hermes usage --provider kenari` prints.
  *
@@ -27,7 +27,7 @@ import {
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
-const ID = 'kenari-usage'
+const ID = 'kenari-helper'
 
 // Quota figures move slowly — this poll only refreshes the numbers.
 const POLL_MS = 2 * 60 * 1000
@@ -243,7 +243,7 @@ function KenariChip({ ctx }) {
 // ── styles ───────────────────────────────────────────────────────────────
 // Injected once per plugin load, removed with the plugin.
 
-const STYLE_ID = 'kenari-usage-style'
+const STYLE_ID = 'kenari-helper-style'
 
 function ensureStyles(ctx) {
   if (document.getElementById(STYLE_ID)) return
@@ -311,8 +311,8 @@ function bindPillText(ctx) {
 }
 
 export default {
-  id: ID, // must match the folder name (plugins/kenari-usage)
-  name: 'Kenari Usage',
+  id: ID, // must match the folder name (plugins/kenari-helper)
+  name: 'Kenari Helper',
   register(ctx) {
     ensureStyles(ctx)
 

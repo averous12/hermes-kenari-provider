@@ -196,7 +196,7 @@ def install_stubs(*, legacy: bool = False) -> dict[str, Any]:
     pricing_mod = types.ModuleType("agent.usage_pricing")
     pricing_mod.CostResult = StubCostResult
 
-    # The kenari-usage backend imports fastapi at module scope. A bare
+    # The kenari-helper backend imports fastapi at module scope. A bare
     # checkout (system Python) has no fastapi, so stub just enough for the
     # pure payload shaper the tests exercise.
     try:  # pragma: no cover — present in the Hermes venv

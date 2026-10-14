@@ -567,7 +567,7 @@ class TestFetchAccountUsage(unittest.TestCase):
         # counts: week/month windows -> remaining_percent = 100 - used.
         from datetime import datetime, timezone
 
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-usage" / "dashboard"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-helper" / "dashboard"))
         import importlib
 
         import plugin_api  # noqa: E402
@@ -601,7 +601,7 @@ class TestFetchAccountUsage(unittest.TestCase):
     def test_plan_none_without_quota_windows(self):
         from datetime import datetime, timezone
 
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-usage" / "dashboard"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-helper" / "dashboard"))
         import importlib
 
         import plugin_api  # noqa: E402
@@ -732,13 +732,15 @@ class TestPlanOnlyFiltering(unittest.TestCase):
 
     def test_toggle_reads_desktop_settings_form(self):
         """The switch written by the desktop form wins over the legacy key."""
-        fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": True}}}}}
+        fake_cfg = {
+            "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": True}}}}
+        }
         with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
 
     def test_desktop_form_beats_legacy_key(self):
         fake_cfg = {
-            "plugins": {"entries": {"kenari": {"settings": {"plan_only": False}}}},
+            "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": False}}}},
             "kenari": {"plan_only": True},
         }
         with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
@@ -751,22 +753,40 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         with patch("hermes_cli.config.load_config_readonly", lambda: {}):
             self.assertIs(self.module._plan_only_enabled(), False)
 
-    def test_registry_key_matches_install_layout(self):
-        """The read path must equal the key the settings writer saves under.
+    def test_reads_toggle_from_helper_plugin(self):
+        """The switch lives on kenari-helper; the provider must read that key."""
+        fake_cfg = {
+            "plugins": {"entries": {"kenari-helper": {"settings": {"plan_only": True}}}}
+        }
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertTrue(self.module._plan_only_enabled())
 
-        A categorized install is keyed `<category>/<name>` (the desktop sends
-        `model-providers/kenari`); a wrong key means the switch saves where
-        the provider never looks.
-        """
-        key = self.module._plugin_registry_key()
-        self.assertTrue(
-            key == "kenari" or key.endswith("/kenari"),
-            f"unexpected registry key {key!r}",
-        )
-        # The path is built from that key, so they can never drift apart.
-        path = tuple(self.module._PLUGIN_SETTINGS_PATH)
-        self.assertEqual(path[2], key, f"path key {path[2]!r} != registry key {key!r}")
-        self.assertEqual(path, ("plugins", "entries", key, "settings", "plan_only"))
+    def test_helper_key_outranks_legacy_provider_key(self):
+        fake_cfg = {
+            "plugins": {
+                "entries": {
+                    "kenari-helper": {"settings": {"plan_only": False}},
+                    "model-providers/kenari": {"settings": {"plan_only": True}},
+                }
+            }
+        }
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertFalse(self.module._plan_only_enabled())
+
+    def test_legacy_provider_key_still_read(self):
+        """An install from before the move keeps working."""
+        fake_cfg = {
+            "plugins": {"entries": {"model-providers/kenari": {"settings": {"plan_only": True}}}}
+        }
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertTrue(self.module._plan_only_enabled())
+
+    def test_toggle_paths_all_target_the_plan_only_field(self):
+        """Every candidate path must end in the field the writer saves."""
+        for path in self.module._PLAN_ONLY_SETTINGS_PATHS:
+            self.assertEqual(path[-1], "plan_only")
+            self.assertEqual(path[:2], ("plugins", "entries"))
+            self.assertIn("kenari", path[2])
 
     def test_non_bool_setting_is_ignored(self):
         fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": "yes"}}}}}
