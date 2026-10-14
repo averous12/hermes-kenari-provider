@@ -26,27 +26,29 @@ Kenari provider installed.
 
    - `KENARI_PLAN_ONLY=1` — **show only plan-covered models.**
 
-     Off by default: the picker lists everything your KEY can call, which
-     may include models your plan does not cover. Turn this on to trim it
-     to the active plan's entitlement list instead.
+     The easiest way is the switch in the desktop: **Capabilities →
+     Plugins → Kenari → Show only plan-covered models**. It saves to
+     `plugins.entries.kenari.settings.plan_only` in `config.yaml`.
+
+     For a headless/CLI install, set the env var instead:
 
      ```
      KENARI_PLAN_ONLY=1
      ```
 
-     Or persist it in `~/.hermes/config.yaml` (the env var wins when both
-     are set):
+     Resolution order: `KENARI_PLAN_ONLY` → the desktop switch →
+     `kenari.plan_only` in `config.yaml` → off. An unparseable value
+     counts as *unset* rather than a guess, so a typo can never silently
+     hide models.
 
-     ```yaml
-     kenari:
-       plan_only: true
-     ```
-
-     Resolution order: `KENARI_PLAN_ONLY` → `kenari.plan_only` → off. An
-     unparseable value counts as *unset* rather than a guess, so a typo
-     can never silently hide models.
+     Off by default: the picker lists everything your KEY can call, which
+     may include models your plan does not cover.
 
      No active plan (or a model-scoped key that Kenari 403s on
      `/account/quota`) means **no filtering** — the picker shows
      everything the key allows. Hiding models with nothing to compare
      against would empty the picker.
+
+   - The API key + endpoint live in the normal provider card
+     (**Settings → Providers → Keys → Kenari**): a Get-key link plus a
+     `KENARI_BASE_URL` override field, both declared by this plugin.

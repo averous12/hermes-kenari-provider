@@ -727,13 +727,39 @@ class TestPlanOnlyFiltering(unittest.TestCase):
 
     def test_toggle_reads_config_when_env_unset(self):
         fake_cfg = {"kenari": {"plan_only": True}}
-        with patch("hermes_cli.config.load_config", lambda: fake_cfg):
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
             self.assertTrue(self.module._plan_only_enabled())
+
+    def test_toggle_reads_desktop_settings_form(self):
+        """The switch written by the desktop form wins over the legacy key."""
+        fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": True}}}}}
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertTrue(self.module._plan_only_enabled())
+
+    def test_desktop_form_beats_legacy_key(self):
+        fake_cfg = {
+            "plugins": {"entries": {"kenari": {"settings": {"plan_only": False}}}},
+            "kenari": {"plan_only": True},
+        }
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertFalse(self.module._plan_only_enabled())
+
+    def test_returns_real_bool_never_none(self):
+        """A falsy setting must return False, not None (an `or` chain leak)."""
+        with patch("hermes_cli.config.load_config_readonly", lambda: {"kenari": {"plan_only": False}}):
+            self.assertIs(self.module._plan_only_enabled(), False)
+        with patch("hermes_cli.config.load_config_readonly", lambda: {}):
+            self.assertIs(self.module._plan_only_enabled(), False)
+
+    def test_non_bool_setting_is_ignored(self):
+        fake_cfg = {"plugins": {"entries": {"kenari": {"settings": {"plan_only": "yes"}}}}}
+        with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
+            self.assertFalse(self.module._plan_only_enabled())
 
     def test_toggle_env_beats_config(self):
         fake_cfg = {"kenari": {"plan_only": True}}
         with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "0"}):
-            with patch("hermes_cli.config.load_config", lambda: fake_cfg):
+            with patch("hermes_cli.config.load_config_readonly", lambda: fake_cfg):
                 self.assertFalse(self.module._plan_only_enabled())
 
     # ── filtering ───────────────────────────────────────────────────────

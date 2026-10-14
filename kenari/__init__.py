@@ -136,6 +136,13 @@ _CATALOG_CACHE: list[str] | None = None
 _PLAN_ONLY_ENV = "KENARI_PLAN_ONLY"
 _PLAN_ONLY_CONFIG_KEY = "plan_only"
 
+# Where the desktop settings form stores `plan_only` (the same path the
+# plugin-facing `ctx.get_config`/`set_config` use): saved by
+# `hermes_cli.plugins_settings.save_plugin_settings` ->
+# `plugins.entries.<plugin_id>.settings.<key>` in config.yaml.
+_PLUGIN_ID = "kenari"
+_PLUGIN_SETTINGS_PATH = ("plugins", "entries", _PLUGIN_ID, "settings", _PLAN_ONLY_CONFIG_KEY)
+
 # Plan scope is per-account and changes rarely; cache the resolved set.
 # `models=None` means "resolved: no plan readable" and is cached on the same
 # TTL — otherwise a scoped key that 403s would re-probe on every picker open.
@@ -168,27 +175,46 @@ def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
 def _plan_only_enabled() -> bool:
     """Is the "show only plan-covered models" toggle on?
 
-    Env beats config.yaml beats the default (off). Unparseable values are
-    treated as unset rather than guessed at, so a typo can't silently hide
-    models.
+    Resolution order (first wins):
+      1. ``KENARI_PLAN_ONLY`` env var
+      2. the desktop's plugin settings form — declares ``plan_only`` in
+         ``kenari/plugin.yaml``, stored at
+         ``plugins.entries.kenari.settings.plan_only`` (same writer the
+         plugin-facing ``ctx.get_config``/``set_config`` use)
+      3. legacy ``kenari.plan_only`` in ``config.yaml``
+      4. default: False
+
+    Unparseable values are treated as unset rather than guessed at, so a
+    typo can't silently hide models.
     """
     raw = (os.getenv(_PLAN_ONLY_ENV, "") or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    try:
-        from hermes_cli.config import load_config  # type: ignore
+    # Desktop settings form first (the documented control), then the legacy
+    # `kenari.plan_only` key. `or` would leak None as the return value, so
+    # pick the first non-None.
+    resolved = _config_bool(_PLUGIN_SETTINGS_PATH)
+    if resolved is None:
+        resolved = _config_bool(("kenari", _PLAN_ONLY_CONFIG_KEY))
+    return bool(resolved)
 
-        cfg = load_config() or {}
-        section = cfg.get("kenari") if isinstance(cfg, dict) else None
-        if isinstance(section, dict):
-            value = section.get(_PLAN_ONLY_CONFIG_KEY)
-            if isinstance(value, bool):
-                return value
+
+def _config_bool(path: tuple[str, ...]) -> bool | None:
+    """Nested ``config.yaml`` value at *path* when it is a real bool, else None."""
+    try:
+        from hermes_cli.config import load_config_readonly  # type: ignore
+
+        config = load_config_readonly() or {}
+        current: Any = config
+        for segment in path:
+            if not isinstance(current, dict) or segment not in current:
+                return None
+            current = current[segment]
     except Exception:
-        pass
-    return False
+        return None
+    return current if isinstance(current, bool) else None
 
 
 def _fetch_active_plan_scope(api_key: str, timeout: float) -> tuple[set[str] | None, str]:

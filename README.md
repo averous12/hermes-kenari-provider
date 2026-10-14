@@ -156,26 +156,30 @@ KENARI_API_KEY=kn-...
 | `KENARI_BASE_URL` | no | Override the default endpoint (proxy / self-hosted relay) |
 | `KENARI_PLAN_ONLY` | no | `1` = list only models the active plan covers. Default off; see below. |
 
-### `KENARI_PLAN_ONLY` — show only plan-covered models
+### `plan_only` — show only plan-covered models
 
 Your key and your plan are different gates: a key may permit models the
 plan excludes, and picking one of those fails or bills differently. This
 toggle trims the picker to the **plan's** entitlement list.
 
+**Desktop:** Capabilities → Plugins → **Kenari** → *Show only
+plan-covered models* (declared as `config_schema.plan_only` in
+`kenari/plugin.yaml`, so it renders as a switch).
+
+**Headless / CLI:**
+
 ```bash
 KENARI_PLAN_ONLY=1                       # in ~/.hermes/.env
 ```
 
-```yaml
-# or persist it in ~/.hermes/config.yaml (env wins when both are set)
-kenari:
-  plan_only: true
-```
+Resolution order: `KENARI_PLAN_ONLY` → the desktop switch
+(`plugins.entries.kenari.settings.plan_only`) → `kenari.plan_only` in
+`config.yaml` → off.
 
 | Value | Picker shows |
 |---|---|
-| unset / `0` (default) | every tool-capable chat model your **key** can call |
-| `1` | those, narrowed to the **active plan's** `scope_models` |
+| unset / off (default) | every tool-capable chat model your **key** can call |
+| on | those, narrowed to the **active plan's** `scope_models` |
 
 Live example on an Indie plan: 70 key-callable models → 34 plan-covered;
 the 36 dropped include `claude-opus-5`, `gpt-5-6-sol`, and several
