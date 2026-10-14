@@ -163,25 +163,32 @@ _PLAN_SCOPE_CACHE: dict[str, Any] = {
 _PLAN_SCOPE_TTL = 600.0
 
 
-def _sort_models_free_cache_first(models: list[str], free_cache: set[str]) -> list[str]:
-    """Free-cache models first, then alphabetical within each group.
+def _sort_models_by_tier(models: list[str], free_cache: set[str]) -> list[str]:
+    """Sort into three tiers, alphabetical within each.
 
-    The picker renders a provider's models in the order handed to it (only
-    de-duplicating), and caps the un-searched list at
-    ``DEFAULT_VISIBLE_PER_PROVIDER`` — so the front of this list is what the
-    user actually sees. Putting the models whose cache reads are free on the
-    active plan first keeps the cheapest-to-use rows in view; everything else
-    stays alphabetical.
+    1. **cache-free** — the active plan's ``free_cache_models``: cache reads
+       bill nothing (the model itself is still paid).
+    2. **free** — a ``:free`` route: the whole request costs nothing.
+    3. **loose** — everything else, i.e. ordinary paid models.
 
-    A ``:free`` route matches its base id, so ``x:free`` counts as free-cache
-    when the plan lists ``x``.
+    A ``:free`` route whose base model is on the free-cache list ranks with
+    the free routes (tier 2), not tier 1: it is already free outright, so the
+    cheaper cache rate is moot.
+
+    The picker renders this order verbatim and caps the un-searched list at
+    ``DEFAULT_VISIBLE_PER_PROVIDER``, so the front of the list decides what is
+    reachable without searching — the useful rows must lead.
     """
-    base_free = {m.split(":", 1)[0] for m in free_cache}
-    base_free |= set(free_cache)
+    cache_free_bases = {m.split(":", 1)[0] for m in free_cache} | set(free_cache)
 
     def rank(model_id: str) -> tuple[int, str]:
-        is_free = model_id in base_free or model_id.split(":", 1)[0] in base_free
-        return (0 if is_free else 1, model_id)
+        base = model_id.split(":", 1)[0]
+        is_free_route = model_id.endswith(":free") or base.endswith(":free")
+        if is_free_route:
+            return (1, model_id)
+        if model_id in cache_free_bases or base in cache_free_bases:
+            return (0, model_id)
+        return (2, model_id)
 
     return sorted(models, key=rank)
 
@@ -1487,12 +1494,14 @@ class KenariProfile(ProviderProfile):
                     "showing all %d allowed models", len(models),
                 )
 
-        # Free-cache rows lead (then alphabetical), because the picker shows
-        # this order verbatim and truncates at DEFAULT_VISIBLE_PER_PROVIDER —
-        # so the head of the list decides what is reachable without searching.
-        free_cache = lists["free_cache"] if isinstance(lists.get("free_cache"), set) else set()
-        if free_cache:
-            models = _sort_models_free_cache_first(models, free_cache)
+        # Three tiers, alphabetical within each: cache-free rows lead, then
+        # `:free` routes, then everything else. The picker shows this order
+        # verbatim and truncates at DEFAULT_VISIBLE_PER_PROVIDER, so the head
+        # of the list decides what is reachable without searching.
+        free_cache = lists["free_cache"]
+        if not isinstance(free_cache, set):
+            free_cache = set()
+        models = _sort_models_by_tier(models, free_cache)
 
         return models
 

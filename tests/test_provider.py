@@ -180,7 +180,7 @@ class TestFetchModels(unittest.TestCase):
         ])
         with self._patch_opener(payload):
             models = self.profile.fetch_models()
-        self.assertEqual(models, ["step-3-7-flash", "step-3-7-flash:free"])
+        self.assertEqual(models, ["step-3-7-flash:free", "step-3-7-flash"])
 
     def test_records_pricing_and_reasoning(self):
         payload = _catalog_payload([
@@ -294,7 +294,7 @@ class TestKeyScopeFiltering(unittest.TestCase):
     def test_scoped_key_filters_picker(self):
         with self._probe_opener([]):
             models = self.profile.fetch_models(api_key="kn-scoped")
-        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free"])
+        self.assertEqual(models, ["hy3:free", "step-3-7-flash:free"])
 
     def test_scope_probe_cached_per_key(self):
         calls = []
@@ -313,7 +313,7 @@ class TestKeyScopeFiltering(unittest.TestCase):
         with patch.object(mod, "open_credentialed_url", opener):
             models = self.profile.fetch_models(api_key="kn-full")
         self.assertEqual(
-            models, ["step-3-7-flash", "step-3-7-flash:free", "hy3:free", "gpt-oss-20b"]
+            models, ["hy3:free", "step-3-7-flash:free", "gpt-oss-20b", "step-3-7-flash"]
         )
 
     def test_bad_key_no_filtering(self):
@@ -855,14 +855,14 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
                 models = self.profile.fetch_models(api_key="kn-full")
         # key allows 3, plan Indie covers 2
-        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free"])
+        self.assertEqual(models, ["hy3:free", "step-3-7-flash:free"])
 
     def test_off_shows_key_scope(self):
         mod = sys.modules["hermes_cli.urllib_security"]
         with patch.object(mod, "open_credentialed_url", self._opener("Indie")):
             models = self.profile.fetch_models(api_key="kn-full")
         self.assertEqual(
-            models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"]
+            models, ["hy3:free", "step-3-7-flash:free", "gpt-oss-20b"]
         )
 
     def test_higher_plan_covers_more(self):
@@ -881,7 +881,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
                 models = self.profile.fetch_models(api_key="kn-full")
         self.assertEqual(
-            models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"],
+            models, ["hy3:free", "step-3-7-flash:free", "gpt-oss-20b"],
             "no active plan must show all key-allowed models, never none",
         )
 
@@ -891,7 +891,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         with patch.object(mod, "open_credentialed_url", self._opener("Indie", quota_status=403)):
             with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
                 models = self.profile.fetch_models(api_key="kn-scoped")
-        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free", "gpt-oss-20b"])
+        self.assertEqual(models, ["hy3:free", "step-3-7-flash:free", "gpt-oss-20b"])
 
     def test_unknown_plan_name_shows_everything(self):
         """Quota names a plan /api/plans does not list."""
@@ -967,7 +967,7 @@ class TestPlanOnlyFiltering(unittest.TestCase):
             with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
                 models = self.profile.fetch_models(api_key="kn-full")
         self.assertIn("hermes-kenari-plugin", seen.get("ua", ""))
-        self.assertEqual(models, ["step-3-7-flash:free", "hy3:free"])
+        self.assertEqual(models, ["hy3:free", "step-3-7-flash:free"])
 
     def test_scope_cache_avoids_refetch(self):
         quota_calls = []
@@ -1020,40 +1020,55 @@ class TestPlanOnlyFiltering(unittest.TestCase):
 
 
 class TestFreeCacheOrdering(unittest.TestCase):
-    """Free-cache models lead the list, then alphabetical."""
+    """Three tiers — cache-free, then `:free` routes, then the rest — each
+    alphabetical. The head of the list is what the picker shows first."""
 
     def setUp(self):
         self.module, self.profile = conftest_stub.load_plugin()
 
-    def test_free_cache_models_come_first(self):
-        models = ["aaa-model", "deepseek-v4-1-flash", "mmm-model", "mimo-v2-6-flash"]
-        out = self.module._sort_models_free_cache_first(
+    def test_three_tiers_each_alphabetical(self):
+        models = [
+            "zzz-paid", "hy3:free", "deepseek-v4-1-flash", "aaa-paid",
+            "agnes-3-0-flash:free", "mimo-v2-6-flash",
+        ]
+        out = self.module._sort_models_by_tier(
             models, {"deepseek-v4-1-flash", "mimo-v2-6-flash"}
         )
         self.assertEqual(
             out,
-            ["deepseek-v4-1-flash", "mimo-v2-6-flash", "aaa-model", "mmm-model"],
+            [
+                # 1. cache-free, alphabetical
+                "deepseek-v4-1-flash", "mimo-v2-6-flash",
+                # 2. free routes, alphabetical
+                "agnes-3-0-flash:free", "hy3:free",
+                # 3. the rest, alphabetical
+                "aaa-paid", "zzz-paid",
+            ],
         )
 
-    def test_alphabetical_within_each_group(self):
-        models = ["zeta", "beta", "gamma", "alpha"]
-        out = self.module._sort_models_free_cache_first(models, {"zeta", "beta"})
-        self.assertEqual(out, ["beta", "zeta", "alpha", "gamma"])
+    def test_free_route_outranks_paid_even_without_cache_free(self):
+        models = ["bbb-paid", "zzz:free", "aaa-paid"]
+        out = self.module._sort_models_by_tier(models, set())
+        self.assertEqual(out, ["zzz:free", "aaa-paid", "bbb-paid"])
 
-    def test_no_free_cache_leaves_alphabetical(self):
+    def test_free_route_with_cache_free_base_is_tier_two(self):
+        """Already free outright — the cheaper cache rate is moot."""
+        models = ["deepseek-v4-flash", "deepseek-v4-flash:free"]
+        out = self.module._sort_models_by_tier(models, {"deepseek-v4-flash"})
+        self.assertEqual(out, ["deepseek-v4-flash", "deepseek-v4-flash:free"])
+
+    def test_no_free_cache_still_splits_free_from_paid(self):
+        models = ["c", "b:free", "a"]
+        out = self.module._sort_models_by_tier(models, set())
+        self.assertEqual(out, ["b:free", "a", "c"])
+
+    def test_all_paid_is_plain_alphabetical(self):
         models = ["c", "a", "b"]
-        self.assertEqual(self.module._sort_models_free_cache_first(models, set()), ["a", "b", "c"])
+        self.assertEqual(self.module._sort_models_by_tier(models, set()), ["a", "b", "c"])
 
-    def test_free_route_matches_its_base_id(self):
-        """`:free` counts as free-cache when the plan lists the base model."""
-        models = ["zzz", "deepseek-v4-flash:free", "aaa"]
-        out = self.module._sort_models_free_cache_first(models, {"deepseek-v4-flash"})
-        self.assertEqual(out[0], "deepseek-v4-flash:free")
-
-    def test_sort_is_stable_for_unknown_ids(self):
-        # Every input survives exactly once — the sort must not drop rows.
-        models = ["b", "a", "c", "d"]
-        out = self.module._sort_models_free_cache_first(models, {"c"})
+    def test_every_input_survives_exactly_once(self):
+        models = ["b", "a:free", "c", "d:free", "deepseek-v4-flash"]
+        out = self.module._sort_models_by_tier(models, {"deepseek-v4-flash"})
         self.assertEqual(sorted(out), sorted(models))
         self.assertEqual(len(out), len(models))
 
@@ -1076,7 +1091,7 @@ class TestFreeCacheOrdering(unittest.TestCase):
                 self.profile.fetch_models()
         self.assertEqual(seen, [])
 
-    def test_ordering_applies_with_plan_only_off(self):
+    def test_tiers_apply_with_plan_only_off(self):
         """Sorting is independent of the filter toggle."""
         fake_plans = [
             {"name": "Indie",
@@ -1093,7 +1108,7 @@ class TestFreeCacheOrdering(unittest.TestCase):
             return _FakeResponse(_catalog_payload([]))
 
         mod = sys.modules["hermes_cli.urllib_security"]
-        self.module._CATALOG_CACHE = ["a-model", "b-model", "c-model"]
+        self.module._CATALOG_CACHE = ["a-model", "b-model", "c-model", "d-model:free"]
         self.module._KEY_ALLOW_CACHE = {}
         self.module._PLAN_SCOPE_CACHE.update(
             {"at": 0.0, "models": None, "plan": "", "free_cache": set(), "resolved": False}
@@ -1102,8 +1117,8 @@ class TestFreeCacheOrdering(unittest.TestCase):
             with patch.object(mod, "open_credentialed_url", opener):
                 with patch.dict(os.environ, {"KENARI_API_KEY": "kn-full"}):
                     models = self.profile.fetch_models(api_key="kn-full")
-        # b-model is free-cache -> leads; the rest stay alphabetical.
-        self.assertEqual(models, ["b-model", "a-model", "c-model"])
+        # b-model cache-free -> first; then the free route; then the rest.
+        self.assertEqual(models, ["b-model", "d-model:free", "a-model", "c-model"])
 
 
 if __name__ == "__main__":
