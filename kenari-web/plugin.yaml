@@ -1,5 +1,5 @@
 name: kenari-web
-version: 0.1.0
+version: 0.2.0
 description: >-
   Kenari web search & page fetch — rides the KENARI_API_KEY the model
   provider already uses, so no separate web-search credential is needed.

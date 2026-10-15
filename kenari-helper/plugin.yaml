@@ -1,6 +1,6 @@
 name: kenari-helper
 kind: standalone
-version: 0.1.0
+version: 0.2.0
 description: Kenari desktop companion — statusbar quota ticker, model-pill badge, and provider settings
 author: avero
 
