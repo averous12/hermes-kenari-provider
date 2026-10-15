@@ -157,6 +157,12 @@ sdk.__state.queryData = {
     models: ['deepseek-v4-flash', 'deepseek-v4-1-flash', 'mimo-v2-6-flash'],
     count: 3
   },
+  web_search: {
+    used: 8,
+    limit: 50,
+    remaining: 42,
+    resets_at: new Date(Date.now() + 12 * HOUR).toISOString()
+  },
   windows: [],
   lines: ['Balance: Rp19.589 available (Rp0 reserved)', 'Last 7d: 565 requests • Rp0 spent']
 }
@@ -187,9 +193,64 @@ console.log('tooltip:')
 for (const line of String(tree?.props?.label).split('\n')) console.log('   ', line)
 
 // Rotate: advance the slot atom the way the interval would, then re-render.
-const slotAtom = sdk.atoms[sdk.atoms.length - 1]
+// Identify the slot atom by BEHAVIOUR (whichever atom the 8s interval bumps) —
+// "last atom declared" stopped being the slot once $freeCache was added.
+const atomsBefore = sdk.atoms.map(a => a.get())
+sdk.__state.intervals.find(i => i.ms === 8000).fn()
+const changed = sdk.atoms.filter((a, i) => a.get() !== atomsBefore[i])
+if (changed.length !== 1) throw new Error(`expected exactly one atom bumped by rotation, got ${changed.length}`)
+const slotAtom = changed[0]
+console.log('slot atom identified by rotation:', typeof slotAtom.get() === 'number')
 slotAtom.set(slotAtom.get() + 1)
 console.log('\nchip label (slot 1):', labelOf(chip.render().type({ ctx })))
+
+// ── daily web-search slot ───────────────────────────────────────────────
+// windows = [7d, 30d, ws] when the plan caps the daily allowance, so slot 2
+// is the web-search counter (used/limit, not a percentage).
+console.log('\n--- daily web-search slot ---')
+const wsLabels = []
+for (let i = 0; i < 3; i++) {
+  slotAtom.set(i)
+  wsLabels.push(labelOf(chip.render().type({ ctx })))
+}
+wsLabels.forEach((l, i) => console.log(`  slot ${i}:`, l))
+if (!wsLabels[2].includes('8/50')) throw new Error('web-search slot missing the 8/50 counter: ' + wsLabels[2])
+console.log('  counter 8/50 present in slot 2:', true)
+
+// The tooltip must carry the same figure with the remaining count.
+slotAtom.set(2)
+const wsTip = String(chip.render().type({ ctx })?.props?.label)
+const wsLine = wsTip.split('\n').find(l => l.includes('Web search'))
+console.log('  tooltip line:', wsLine)
+if (!wsLine || !wsLine.includes('8/50') || !wsLine.includes('42 left')) {
+  throw new Error('web-search tooltip line wrong: ' + wsLine)
+}
+
+// ── simulate the allowance running out ──────────────────────────────────
+// used == limit: the chip must show a full counter, and the tooltip must say
+// 0 left — never a negative remainder or a bare percentage.
+for (const [used, limit, expect] of [[50, 50, '50/50'], [51, 50, '51/50']]) {
+  sdk.__state.queryData.web_search = {
+    used, limit, remaining: Math.max(0, limit - used),
+    resets_at: new Date(Date.now() + 2 * HOUR).toISOString()
+  }
+  slotAtom.set(2)
+  const tree = chip.render().type({ ctx })
+  const label = labelOf(tree)
+  const tip = String(tree?.props?.label)
+  const line = tip.split('\n').find(l => l.includes('Web search'))
+  console.log(`  used=${used} -> label=${JSON.stringify(label)} | tip=${JSON.stringify(line)}`)
+  if (!label.includes(expect)) throw new Error(`expected ${expect} in label, got ${label}`)
+  if (line.includes('-')) throw new Error('tooltip shows a negative remainder: ' + line)
+}
+console.log('  exhausted -> full counter, no negative remainder:', true)
+
+// No cap on the plan (limit 0/absent) -> slot disappears, no empty counter.
+sdk.__state.queryData.web_search = { used: 3, limit: 0, resets_at: null }
+slotAtom.set(0)
+const noCap = labelOf(chip.render().type({ ctx }))
+console.log('  limit=0 -> chip falls back to a plan window:', JSON.stringify(noCap))
+if (noCap.includes('/')) throw new Error('uncapped plan must not render a counter: ' + noCap)
 
 // Countdown sanity: a window that resets in 90 minutes, forced onto slot 0.
 slotAtom.set(0)

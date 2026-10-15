@@ -52,3 +52,21 @@ Kenari provider installed.
    - The API key + endpoint live in the normal provider card
      (**Settings → Providers → Keys → Kenari**): a Get-key link plus a
      `KENARI_BASE_URL` override field, both declared by this plugin.
+
+4. Web search (optional) — install the `kenari-web/` backend to serve
+   Hermes' `web_search` / `web_extract` from Kenari's `/v1/web/search` and
+   `/v1/web/fetch`, reusing this same key:
+
+   ```bash
+   cp -r kenari-web ~/.hermes/plugins/web/kenari
+   hermes plugins enable kenari-web
+   ```
+
+   It acts as a fallback — a dedicated web backend (Firecrawl, Tavily, …)
+   takes precedence whenever one is configured or keyed. Pin it outright
+   with `web: {search_backend: kenari, extract_backend: kenari}`.
+
+   Each plan includes a daily web-search **call** allowance counted per UTC
+   day; above it, calls bill to balance only if "continue with balance" is
+   on, otherwise they are refused with a clear error. The statusbar ticker
+   shows it as a third slot (`kenari ws 8/50 · 12h left`).

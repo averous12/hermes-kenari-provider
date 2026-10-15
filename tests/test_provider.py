@@ -1121,5 +1121,147 @@ class TestFreeCacheOrdering(unittest.TestCase):
         self.assertEqual(models, ["b-model", "d-model:free", "a-model", "c-model"])
 
 
+class TestWebSearchDailyCounter(unittest.TestCase):
+    """Daily web-search allowance: used vs the plan's `web_search_daily`.
+
+    Kenari counts web-search/fetch calls per UTC day and bills above the
+    allowance to balance only when "continue with balance" is on — so `used`
+    can legitimately exceed `limit`, and the remainder must never go negative.
+    """
+
+    PLANS = [
+        {"id": "plan-ringan-v3", "name": "Indie", "web_search_daily": 50},
+        {"id": "plan-enterprise", "name": "Enterprise", "web_search_daily": 0},
+        {"id": "plan-nofield", "name": "NoField"},
+    ]
+
+    def setUp(self):
+        # Ensure the fastapi stub is installed (conftest_stub installs it when
+        # the provider plugin loads) and that OUR plan fixture is the one read:
+        # `_fetch_plans` treats a stale timestamp as a cache miss, so seed `at`
+        # with a current monotonic value instead of 0.
+        import time
+
+        import conftest_stub  # noqa: E402
+
+        conftest_stub.load_plugin()
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kenari-helper" / "dashboard"))
+        import importlib
+
+        import plugin_api  # noqa: E402
+
+        self.api = importlib.reload(plugin_api)
+        self.api._plans_cache.update({"at": time.monotonic(), "plans": list(self.PLANS)})
+        self.api._ws_cache.update({"at": 0.0, "key": "", "value": None})
+
+    def _usage(self, requests, *, model="web_search"):
+        return {"data": [{"model": model, "requests": requests}]} if requests is not None else None
+
+    def _run(self, requests, *, plan="Indie"):
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: self._usage(requests)):
+            return self.api._web_search_usage(plan, "kn-test")
+
+    def test_counts_used_against_plan_limit(self):
+        ws = self._run(8)
+        self.assertEqual(ws["used"], 8)
+        self.assertEqual(ws["limit"], 50)
+        self.assertEqual(ws["remaining"], 42)
+        self.assertIn("resets_at", ws)
+
+    def test_exhausted_allowance_reports_zero_left(self):
+        ws = self._run(50)
+        self.assertEqual(ws["used"], 50)
+        self.assertEqual(ws["remaining"], 0)
+
+    def test_over_allowance_clamps_remaining_at_zero(self):
+        """Above the allowance the call still succeeds on balance — never -1."""
+        ws = self._run(51)
+        self.assertEqual(ws["used"], 51)
+        self.assertEqual(ws["remaining"], 0)
+
+    def test_sums_across_rows(self):
+        payload = {"data": [
+            {"model": "web_search", "requests": 3},
+            {"model": "web_search", "requests": 4},
+            {"model": "deepseek-v4-1-flash", "requests": 999},
+        ]}
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: payload):
+            ws = self.api._web_search_usage("Indie", "kn-test")
+        self.assertEqual(ws["used"], 7, "only web_search rows count")
+
+    def test_no_usage_rows_is_zero_used(self):
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: {"data": []}):
+            ws = self.api._web_search_usage("Indie", "kn-test")
+        self.assertEqual(ws["used"], 0)
+        self.assertEqual(ws["remaining"], 50)
+
+    def test_uncapped_plan_omits_limit(self):
+        """web_search_daily 0/absent means no cap — no counter to draw."""
+        ws = self._run(3, plan="Enterprise")
+        self.assertNotIn("limit", ws)
+        self.assertNotIn("remaining", ws)
+
+    def test_missing_field_omits_limit(self):
+        ws = self._run(3, plan="NoField")
+        self.assertNotIn("limit", ws)
+
+    def test_unreadable_usage_returns_none_not_zero(self):
+        """A failed counter must not render as '0 used'."""
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: None):
+            self.assertIsNone(self.api._web_search_usage("Indie", "kn-test"))
+
+    def test_no_key_returns_none(self):
+        with patch.object(self.api, "_get_json", lambda *a, **k: self.fail("must not call the API")):
+            self.assertIsNone(self.api._web_search_usage("Indie", ""))
+
+    def test_usage_is_cached_per_key(self):
+        calls = []
+
+        def fake(url, key, timeout=10.0):
+            calls.append(url)
+            return {"data": [{"model": "web_search", "requests": 5}]}
+
+        with patch.object(self.api, "_get_json", fake):
+            self.api._web_search_usage("Indie", "kn-test")
+            self.api._web_search_usage("Indie", "kn-test")
+        self.assertEqual(len(calls), 1, "second read should hit the cache")
+
+    def test_cache_is_key_scoped(self):
+        calls = []
+
+        def fake(url, key, timeout=10.0):
+            calls.append(key)
+            return {"data": [{"model": "web_search", "requests": 5}]}
+
+        with patch.object(self.api, "_get_json", fake):
+            self.api._web_search_usage("Indie", "kn-a")
+            self.api._web_search_usage("Indie", "kn-b")
+        self.assertEqual(calls, ["kn-a", "kn-b"], "a different key must refetch")
+
+    def test_reset_is_next_utc_midnight(self):
+        self.api._web_search_usage("Indie", "kn-test")
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: {"data": []}):
+            iso = self.api._next_utc_midnight_iso()
+        from datetime import datetime, timedelta, timezone
+
+        reset = datetime.fromisoformat(iso)
+        self.assertEqual(reset.tzinfo, timezone.utc)
+        self.assertEqual((reset.hour, reset.minute, reset.second), (0, 0, 0))
+        self.assertLess(reset - datetime.now(timezone.utc), timedelta(days=1, seconds=5))
+
+    def test_usage_url_filters_to_today_and_web_search(self):
+        seen = {}
+
+        def fake(url, key, timeout=10.0):
+            seen["url"] = url
+            return {"data": []}
+
+        with patch.object(self.api, "_get_json", fake):
+            self.api._web_search_usage("Indie", "kn-test")
+        self.assertIn("range=today", seen["url"])
+        self.assertIn("model=web_search", seen["url"])
+
+
 if __name__ == "__main__":
     unittest.main()

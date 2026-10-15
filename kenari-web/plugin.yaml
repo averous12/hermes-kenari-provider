@@ -1,0 +1,12 @@
+name: kenari-web
+version: 0.1.0
+description: >-
+  Kenari web search & page fetch — rides the KENARI_API_KEY the model
+  provider already uses, so no separate web-search credential is needed.
+  Billed per call against the plan's web-search allowance.
+author: avero
+kind: backend
+provides_web_providers:
+  - kenari
+requires_env:
+  - KENARI_API_KEY

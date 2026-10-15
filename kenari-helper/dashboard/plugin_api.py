@@ -23,7 +23,9 @@ router = APIRouter()
 
 
 _KENARI_PLANS_URL = "https://kenari.id/api/plans"
+_KENARI_API_BASE = "https://kenari.id/v1"
 _plans_cache: dict[str, Any] = {"at": 0.0, "plans": None}
+_ws_cache: dict[str, Any] = {"at": 0.0, "key": "", "value": None}
 
 
 def _fetch_plans() -> list[dict[str, Any]] | None:
@@ -83,6 +85,108 @@ def _free_cache_for_plan(plan_name: str | None) -> dict[str, Any] | None:
     }
 
 
+def _resolve_key() -> str:
+    """The Kenari API key, from the provider's credential resolution.
+
+    Mirrors how the model provider resolves it (Hermes secret scope, then
+    ``~/.hermes/.env``), with a plain env fallback so the backend still works
+    in a stripped process.
+    """
+    try:
+        from hermes_cli.auth import resolve_api_key_provider_credentials
+
+        creds = resolve_api_key_provider_credentials("kenari") or {}
+        if isinstance(creds, dict):
+            key = str(creds.get("api_key") or "").strip()
+            if key:
+                return key
+    except Exception as exc:  # noqa: BLE001
+        log.debug("kenari-helper key resolution fell back to env: %s", exc)
+    return (os.environ.get("KENARI_API_KEY") or "").strip()
+
+
+def _get_json(url: str, api_key: str, timeout: float = 10.0) -> Any:
+    """GET *url* as JSON with the Kenari UA, or ``None`` on any failure."""
+    try:
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                # Kenari's /api/* routes sit behind Cloudflare: a UA-less
+                # client gets Error 1010.
+                "User-Agent": "hermes-kenari-plugin",
+                **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as exc:  # noqa: BLE001
+        log.debug("kenari-helper GET %s failed: %s", url, exc)
+        return None
+
+
+def _next_utc_midnight_iso() -> str:
+    """When the daily web-search allowance resets — 00:00 UTC, per Kenari's docs."""
+    import datetime
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    tomorrow = (now + datetime.timedelta(days=1)).date()
+    return datetime.datetime.combine(tomorrow, datetime.time.min, datetime.timezone.utc).isoformat()
+
+
+def _web_search_usage(plan_name: str | None, api_key: str) -> dict[str, Any] | None:
+    """Today's web-search calls against the plan's daily allowance.
+
+    Kenari bills web search/fetch against a per-plan DAILY CALL allowance
+    counted per UTC day (``web_search_daily`` in ``/api/plans``). Usage comes
+    from ``GET /v1/usage?range=today&model=web_search`` — the same counter the
+    ``web_search`` rows appear under in the usage log.
+
+    Returns ``None`` when either half is unknown: no limit on the plan (the
+    field is absent/0 → unlimited) leaves nothing meaningful to show, and an
+    unreadable counter must not render as "0 used".
+    """
+    import time
+
+    if not api_key:
+        return None
+    limit: int | None = None
+    if plan_name and (plans := _fetch_plans()):
+        want = str(plan_name).strip().lower()
+        plan = next((p for p in plans if str(p.get("name", "")).strip().lower() == want), None)
+        if plan is not None:
+            raw_limit = plan.get("web_search_daily")
+            if isinstance(raw_limit, int) and raw_limit > 0:
+                limit = raw_limit
+
+    now = time.monotonic()
+    if _ws_cache["value"] is not None and _ws_cache["key"] == api_key and now - _ws_cache["at"] < 60:
+        cached = dict(_ws_cache["value"])
+        if limit is not None:
+            cached["limit"] = limit
+            cached["remaining"] = max(0, limit - int(cached.get("used") or 0))
+        return cached
+
+    payload = _get_json(f"{_KENARI_API_BASE}/usage?range=today&model=web_search", api_key)
+    if not isinstance(payload, dict):
+        return None
+    used = 0
+    rows = payload.get("data")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("model", "")).startswith("web_search"):
+                used += int(row.get("requests") or 0)
+    value: dict[str, Any] = {"used": used, "resets_at": _next_utc_midnight_iso()}
+    if limit is not None:
+        value["limit"] = limit
+        value["remaining"] = max(0, limit - used)
+    _ws_cache.update({"at": now, "key": api_key, "value": dict(value)})
+    return value
+
+
 def _snapshot_to_payload(snapshot: Any) -> dict[str, Any]:
     windows = [
         {
@@ -120,12 +224,14 @@ def _snapshot_to_payload(snapshot: Any) -> dict[str, Any]:
 
     raw = snapshot.raw if isinstance(snapshot.raw, dict) else {}
     free_cache = _free_cache_for_plan(snapshot.plan)
+    web_search = _web_search_usage(snapshot.plan, _resolve_key())
     return {
         "ok": True,
         "provider": snapshot.provider,
         "title": snapshot.title,
         "plan": plan,
         "free_cache": free_cache,
+        "web_search": web_search,
         "windows": windows,
         "lines": list(snapshot.details or []),
         "usage_7d": raw.get("usage_7d"),

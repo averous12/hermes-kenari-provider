@@ -160,6 +160,19 @@ function KenariChip({ ctx }) {
     }
   }
 
+  // Daily web-search allowance: a per-plan CALL count per UTC day, not a
+  // percentage — so it carries `count` instead of `percent` and renders as
+  // used/limit. Only shown when the plan actually caps it (limit > 0).
+  const webSearch = summary && summary.web_search
+  if (webSearch && typeof webSearch.limit === 'number' && webSearch.limit > 0) {
+    windows.push({
+      key: 'websearch',
+      label: t('slotWebSearch'),
+      count: { used: webSearch.used || 0, limit: webSearch.limit },
+      resetsAt: webSearch.resets_at
+    })
+  }
+
   // Rotate only when there is more than one window to show.
   useInterval(
     ctx,
@@ -177,7 +190,13 @@ function KenariChip({ ctx }) {
     label = t('loading')
   } else if (active) {
     const cd = active.resetsAt ? countdown(Date.parse(active.resetsAt) - now) : null
-    if (cd && !cd.done) label = t('ticker', active.label, active.percent, t('inDays', cd.d, cd.h))
+    if (active.count) {
+      // A call-count window (daily web search): used/limit, not a percentage.
+      const { used, limit } = active.count
+      if (cd && !cd.done) label = t('tickerCount', active.label, used, limit, t('inDays', cd.d, cd.h))
+      else if (cd) label = t('tickerCountDue', active.label, used, limit)
+      else label = t('tickerCountNoReset', active.label, used, limit)
+    } else if (cd && !cd.done) label = t('ticker', active.label, active.percent, t('inDays', cd.d, cd.h))
     else if (cd) label = t('tickerDue', active.label, active.percent)
     else label = t('tickerNoReset', active.label, active.percent)
   } else if (summary) {
@@ -195,6 +214,17 @@ function KenariChip({ ctx }) {
   for (const w of windows) {
     const cd = w.resetsAt ? countdown(Date.parse(w.resetsAt) - now) : null
     const remaining = cd && !cd.done ? t('inDhms', cd.d, cd.h, cd.m, cd.s) : t('dueNow')
+    if (w.count) {
+      // Clamp the remainder: a call above the allowance still succeeds when
+      // "continue with balance" is on, so used can exceed limit — "-1 left"
+      // would be nonsense.
+      const left = Math.max(0, w.count.limit - w.count.used)
+      tipLines.push(
+        t('webSearchLine', w.count.used, w.count.limit, left,
+          w.resetsAt ? remaining : t('noReset'))
+      )
+      continue
+    }
     tipLines.push(
       t(w.key === 'week' ? 'weekLine' : 'monthLine', w.percent, w.detail || '',
         w.resetsAt ? remaining : t('noReset'))
@@ -324,9 +354,13 @@ export default {
         noPlan: 'kenari — no plan',
         slotWeek: '7d',
         slotMonth: '30d',
+        slotWebSearch: 'ws',
         ticker: (slot, percentLeft, until) => `kenari ${slot} ${percentLeft}% · ${until}`,
         tickerDue: (slot, percentLeft) => `kenari ${slot} ${percentLeft}% · resetting`,
         tickerNoReset: (slot, percentLeft) => `kenari ${slot} ${percentLeft}%`,
+        tickerCount: (slot, used, limit, until) => `kenari ${slot} ${used}/${limit} · ${until}`,
+        tickerCountDue: (slot, used, limit) => `kenari ${slot} ${used}/${limit} · resetting`,
+        tickerCountNoReset: (slot, used, limit) => `kenari ${slot} ${used}/${limit}`,
         inDays: (d, h) => (d > 0 ? `${d}d ${h}h left` : `${h}h left`),
         inDhms: (d, h, m, s) =>
           d > 0 ? `${d}d ${h}h ${m}m ${s}s` : h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`,
@@ -338,6 +372,8 @@ export default {
           `30d remaining: ${pctLeft}%${detail ? ` (${detail})` : ''} • resets in ${remaining}`,
         noReset: 'unknown',
         freeCacheLine: models => `Cache-free: ${models}`,
+        webSearchLine: (used, limit, left, resets) =>
+          `Web search: ${used}/${limit} calls today (${left} left) • resets in ${resets}`,
         pillFreeCache: id => `⚡ ${id} · cache-free`,
         tipEmpty: why => `Kenari usage unavailable (${why})`
       },
@@ -348,9 +384,13 @@ export default {
         noPlan: 'kenari — tanpa paket',
         slotWeek: '7d',
         slotMonth: '30d',
+        slotWebSearch: 'ws',
         ticker: (slot, percentLeft, until) => `kenari ${slot} sisa ${percentLeft}% · ${until}`,
         tickerDue: (slot, percentLeft) => `kenari ${slot} sisa ${percentLeft}% · reset`,
         tickerNoReset: (slot, percentLeft) => `kenari ${slot} sisa ${percentLeft}%`,
+        tickerCount: (slot, used, limit, until) => `kenari ${slot} ${used}/${limit} · ${until}`,
+        tickerCountDue: (slot, used, limit) => `kenari ${slot} ${used}/${limit} · reset`,
+        tickerCountNoReset: (slot, used, limit) => `kenari ${slot} ${used}/${limit}`,
         inDays: (d, h) => (d > 0 ? `${d}h ${h}j lagi` : `${h}j lagi`),
         inDhms: (d, h, m, s) =>
           d > 0 ? `${d}h ${h}j ${m}m ${s}s` : h > 0 ? `${h}j ${m}m ${s}s` : `${m}m ${s}s`,
@@ -362,6 +402,8 @@ export default {
           `Sisa 30d: ${pctLeft}%${detail ? ` (${detail})` : ''} • reset dalam ${remaining}`,
         noReset: 'tidak diketahui',
         freeCacheLine: models => `Cache gratis: ${models}`,
+        webSearchLine: (used, limit, left, resets) =>
+          `Pencarian web: ${used}/${limit} panggilan hari ini (sisa ${left}) • reset dalam ${resets}`,
         pillFreeCache: id => `⚡ ${id} · cache gratis`,
         tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }

@@ -9,9 +9,11 @@ picker to tool-capable chat routes the configured key may actually call,
 maps reasoning effort onto Kenari's `reasoning` object, prices responses
 in Rupiah from the live catalog, and surfaces wallet/plan/usage via
 `hermes usage`. It ships with a companion desktop plugin
-(`kenari-helper/`) that shows plan quota in the statusbar. It touches no
-Hermes core files — discovery, credential resolution, `hermes doctor`,
-and the `--provider` flag all auto-wire from the provider registry.
+(`kenari-helper/`) that shows plan quota in the statusbar, and a
+web-search backend (`kenari-web/`) that serves `web_search` /
+`web_extract` from the same key. It touches no Hermes core files —
+discovery, credential resolution, `hermes doctor`, and the `--provider`
+flag all auto-wire from the provider registry.
 
 ## What it does
 
@@ -50,6 +52,10 @@ and the `--provider` flag all auto-wire from the provider registry.
   `/v1/account/quota`). Off by default — a key can call models the plan
   excludes. With no readable plan the filter **fails open** (shows
   everything) rather than emptying the picker.
+- **Web search & fetch.** `kenari-web/` serves Hermes' `web_search` /
+  `web_extract` from Kenari's `/v1/web/search` and `/v1/web/fetch` using the
+  same API key — a fallback that yields to any dedicated web backend, and
+  whose daily per-UTC-day call allowance shows in the statusbar ticker.
 - **Desktop statusbar ticker** (`kenari-helper/` companion): plan quota
   % left for 7d/30d with a live reset countdown in `statusBar.right`,
   rotating windows, 2-minute poll, click-to-refresh, full lines in the
@@ -73,6 +79,7 @@ This repo ships **two independent plugins**. Install either or both.
 |---|---|---|
 | repo root + `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/kenari` |
 | `kenari-helper/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-helper` |
+| `kenari-web/` | Web-search backend (`web_search` / `web_extract`) | `~/.hermes/plugins/web/kenari` |
 
 They are separate because Hermes loads them through different registries:
 model providers load from `plugins/model-providers/` (or the flat
@@ -279,6 +286,70 @@ cp -r kenari-helper ~/.hermes/plugins/kenari-helper
 The chip fails quiet — no key or a down gateway shows `kenari n/a`, never
 a toast. A model-scoped key that Kenari 403s on `/account/quota` shows
 `kenari — no plan` instead of an error.
+
+## Web search & page fetch (`kenari-web/`)
+
+A web-search backend plugin that serves Hermes' `web_search` and
+`web_extract` tools from Kenari's standalone endpoints:
+
+| Tool | Endpoint | Billed |
+|---|---|---|
+| `web_search` | `POST /v1/web/search` | per call |
+| `web_extract` | `POST /v1/web/fetch` | per call |
+
+`kenari:datetime` / `kenari:x_search` exist as *server tools* (declared in a
+chat request) but have no standalone endpoint, so they aren't exposed as
+Hermes tools.
+
+**No new credential.** It rides `KENARI_API_KEY` — the same key the model
+provider uses.
+
+### Positioning: it's a fallback, not a hijack
+
+Hermes resolves the active web backend as: explicit
+`web.search_backend`/`web.extract_backend`, then the single available
+keyed provider, then the legacy preference walk, then the anonymous keyless
+ring. Because Kenari is `is_available()` whenever its key is present, it:
+
+| Setup | Active search backend |
+|---|---|
+| Only Kenari keyed | **kenari** |
+| Kenari **+** `FIRECRAWL_API_KEY` | firecrawl — Kenari steps aside |
+| `web.search_backend: kenari` | **kenari** (explicit pin wins) |
+
+And when a keyed backend *fails*, Hermes' own one-shot keyless rescue still
+runs — so the effective chain is **Kenari → Hermes' keyless fallbacks →
+error**. Verified: a forced 402 returns
+`{"success": false, "error": "...daily web-search allowance is used up... (keyless rescue also failed: ...)"}`
+— a clean failure the agent can read, never a crash.
+
+### The daily allowance
+
+Every plan includes a daily **call count** for web search/fetch, counted per
+**UTC day**, and calls above it are billed to balance only when "continue
+with balance" is enabled (otherwise the call is refused). The statusbar chip
+shows it as a third ticker slot:
+
+```
+🐦 kenari 7d 24% · 1d 4h left   →   🐦 kenari 30d 81% · 21d 3h left   →   🐦 kenari ws 8/50 · 12h left
+```
+
+with `Web search: 8/50 calls today (42 left) • resets in 12h` in the
+tooltip. The slot only appears when the plan actually caps the allowance;
+`used` clamps the remainder at zero so running over can't render `-1 left`.
+
+### Install
+
+```bash
+# Flat under plugins/web/, so its registry key is `web/kenari`:
+cp -r kenari-web ~/.hermes/plugins/web/kenari
+hermes plugins enable kenari-web
+# Pin it instead of relying on the fallback order:
+#   web: { search_backend: kenari, extract_backend: kenari }
+```
+
+Verify with `hermes tools` (Kenari appears as a web-search backend) and
+`hermes plugins list`.
 
 ## Model picker rows (optional, needs a core patch)
 
