@@ -1,5 +1,5 @@
 name: kenari-helper
-kind: hermes-plugin
+kind: standalone
 version: 0.1.0
 description: Kenari desktop companion — statusbar quota ticker, model-pill badge, and provider settings
 author: avero
