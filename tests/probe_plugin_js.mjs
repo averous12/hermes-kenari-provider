@@ -215,6 +215,7 @@ for (let i = 0; i < 3; i++) {
 }
 wsLabels.forEach((l, i) => console.log(`  slot ${i}:`, l))
 if (!wsLabels[2].includes('8/50')) throw new Error('web-search slot missing the 8/50 counter: ' + wsLabels[2])
+if (!wsLabels[2].includes('Search')) throw new Error('web-search slot label should read "Search": ' + wsLabels[2])
 console.log('  counter 8/50 present in slot 2:', true)
 
 // The tooltip must carry the same figure with the remaining count.

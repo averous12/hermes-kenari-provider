@@ -331,7 +331,7 @@ with balance" is enabled (otherwise the call is refused). The statusbar chip
 shows it as a third ticker slot:
 
 ```
-🐦 kenari 7d 24% · 1d 4h left   →   🐦 kenari 30d 81% · 21d 3h left   →   🐦 kenari ws 8/50 · 12h left
+🐦 kenari 7d 24% · 1d 4h left   →   🐦 kenari 30d 81% · 21d 3h left   →   🐦 kenari Search 8/50 · 12h left
 ```
 
 with `Web search: 8/50 calls today (42 left) • resets in 12h` in the
