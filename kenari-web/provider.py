@@ -48,9 +48,63 @@ def _base_url() -> str:
     return (get_provider_env(BASE_URL_ENV) or DEFAULT_BASE_URL).rstrip("/")
 
 
+def _api_key() -> str:
+    """The Kenari key, however it was configured.
+
+    Layered, cheapest-first, because there are two distinct write paths and
+    they do NOT land in the same place:
+
+    1. ``get_provider_env(KEY_ENV)`` — the normal path. The provider plugin
+       declares ``KENARI_API_KEY`` in its profile's ``env_vars``, and Hermes
+       (plus this web backend) read the same name out of ``os.environ`` /
+       ``~/.hermes/.env``. One key, one file, both sides.
+    2. The Provider page's desktop save path, which persists a *credential
+       pointer* as ``model.key_env`` → ``$HERMES_HOME/.env`` instead of the
+       registry's canonical var (#106336). If the card wrote a custom name,
+       ``get_provider_env(KEY_ENV)`` finds nothing and web search would
+       silently report unavailable while chat worked fine — so honor the
+       pointer.
+    3. ``resolve_api_key_provider_credentials`` — the model provider's own
+       resolution, which covers the credential pool and every other path the
+       model side already accepts.
+    """
+    val = get_provider_env(KEY_ENV)
+    if val:
+        return val
+
+    try:
+        from hermes_cli.config import get_env_value_prefer_dotenv, load_config
+
+        model_cfg = (load_config() or {}).get("model")
+        if isinstance(model_cfg, dict) and \
+                str(model_cfg.get("provider") or "").strip().lower() == "kenari":
+            pointer = model_cfg.get("key_env") or model_cfg.get("api_key_env")
+            if pointer:
+                pointed = (get_env_value_prefer_dotenv(str(pointer)) or "").strip()
+                if pointed:
+                    logger.debug("kenari-web: key via model.key_env=%s", pointer)
+                    return pointed
+    except Exception as exc:  # noqa: BLE001 — pointer is an optional fallback
+        logger.debug("kenari-web: model.key_env lookup unavailable: %s", exc)
+
+    try:
+        from hermes_cli.auth import resolve_api_key_provider_credentials
+
+        creds = resolve_api_key_provider_credentials("kenari") or {}
+        if isinstance(creds, dict):
+            resolved = str(creds.get("api_key") or "").strip()
+            if resolved:
+                logger.debug("kenari-web: key via the provider credential resolver")
+                return resolved
+    except Exception as exc:  # noqa: BLE001 — same: optional fallback
+        logger.debug("kenari-web: provider credential resolution unavailable: %s", exc)
+
+    return ""
+
+
 def _headers() -> Dict[str, str]:
     return {
-        "Authorization": f"Bearer {get_provider_env(KEY_ENV)}",
+        "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
         "Accept": "application/json",
         # Kenari sits behind Cloudflare; a UA-less client gets Error 1010.
@@ -138,7 +192,10 @@ class KenariWebSearchProvider(WebSearchProvider):
         tier, and claiming one would let the legacy walk route users who hold a
         real web key onto Kenari.
         """
-        return bool(get_provider_env(KEY_ENV))
+        # Same resolver the request path uses, so availability and auth can
+        # never disagree: a key found only through the Provider page's
+        # model.key_env pointer still counts as available.
+        return bool(_api_key())
 
     def supports_search(self) -> bool:
         return True

@@ -92,6 +92,103 @@ def set_env(**values: str) -> None:
     ABC.__env_store__.update(values)
 
 
+class TestKeyResolutionLayers(unittest.TestCase):
+    """The key must be found whichever way the Provider page saved it.
+
+    Two distinct write paths exist and they do NOT land in the same place: the
+    canonical ``KENARI_API_KEY`` (which is what ``get_provider_env`` reads) and
+    the desktop card's ``model.key_env`` pointer to ``$HERMES_HOME/.env``. When
+    only the pointer exists, web search used to report itself unavailable while
+    chat worked — silently, because nothing errored.
+    """
+
+    def setUp(self):
+        set_env()
+        self.mod = load_provider()
+
+    def tearDown(self):
+        set_env()
+
+    def test_canonical_env_var_wins(self):
+        set_env(KENARI_API_KEY="kn-canonical")
+        self.assertEqual(self.mod._api_key(), "kn-canonical")
+
+    def test_falls_back_to_model_key_env_pointer(self):
+        """The bug: key present only via the desktop pointer."""
+        cfg = {"model": {"provider": "kenari", "key_env": "HERMES_CUSTOM_KENARI_API_KEY"}}
+        with patch.dict(sys.modules, {"hermes_cli.config": _fake_config_mod(
+                load_config=lambda: cfg,
+                get_env_value_prefer_dotenv=lambda n: "kn-from-pointer"
+                if n == "HERMES_CUSTOM_KENARI_API_KEY" else "")}):
+            self.assertEqual(self.mod._api_key(), "kn-from-pointer")
+
+    def test_pointer_ignored_when_model_provider_is_something_else(self):
+        cfg = {"model": {"provider": "openrouter", "key_env": "SOME_OTHER_KEY"}}
+        with patch.dict(sys.modules, {"hermes_cli.config": _fake_config_mod(
+                load_config=lambda: cfg,
+                get_env_value_prefer_dotenv=lambda n: "not-kenaris-key")}):
+            self.assertEqual(
+                self.mod._api_key(), "",
+                "another provider's pointer must not be read as a Kenari key")
+
+    def test_falls_back_to_provider_credential_resolver(self):
+        """Credential-pool setups resolve only through the provider's own path."""
+        resolver = types.ModuleType("hermes_cli.auth")
+        resolver.resolve_api_key_provider_credentials = (
+            lambda pid: {"api_key": "kn-pooled", "source": "credential_pool"}
+        )
+        with patch.dict(sys.modules, {
+            "hermes_cli.config": _fake_config_mod(load_config=lambda: {}, get_env_value_prefer_dotenv=lambda n: ""),
+            "hermes_cli.auth": resolver,
+        }):
+            self.assertEqual(self.mod._api_key(), "kn-pooled")
+
+    def test_no_key_anywhere_is_empty_not_an_exception(self):
+        with patch.dict(sys.modules, {
+            "hermes_cli.config": _fake_config_mod(load_config=lambda: {}, get_env_value_prefer_dotenv=lambda n: ""),
+        }):
+            self.assertEqual(self.mod._api_key(), "")
+
+    def test_availability_matches_key_resolution(self):
+        """is_available() must never disagree with what the request path uses."""
+        set_env(KENARI_API_KEY="kn-canonical")
+        self.assertTrue(self.mod.KenariWebSearchProvider().is_available())
+        set_env()
+        self.assertFalse(self.mod.KenariWebSearchProvider().is_available())
+
+    def test_availability_true_via_pointer_only(self):
+        set_env()
+        cfg = {"model": {"provider": "kenari", "key_env": "HERMES_CUSTOM_KENARI_API_KEY"}}
+        with patch.dict(sys.modules, {"hermes_cli.config": _fake_config_mod(
+                load_config=lambda: cfg,
+                get_env_value_prefer_dotenv=lambda n: "kn-from-pointer")}):
+            self.assertTrue(
+                self.mod.KenariWebSearchProvider().is_available(),
+                "a pointer-only key must still count as available")
+
+    def test_headers_use_the_resolved_key(self):
+        set_env()
+        cfg = {"model": {"provider": "kenari", "key_env": "HERMES_CUSTOM_KENARI_API_KEY"}}
+        with patch.dict(sys.modules, {"hermes_cli.config": _fake_config_mod(
+                load_config=lambda: cfg,
+                get_env_value_prefer_dotenv=lambda n: "kn-from-pointer")}):
+            self.assertEqual(self.mod._headers()["Authorization"], "Bearer kn-from-pointer")
+
+    def test_config_layer_failure_does_not_break_resolution(self):
+        broken = types.ModuleType("hermes_cli.config")
+        broken.load_config = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        broken.get_env_value_prefer_dotenv = lambda n: ""
+        with patch.dict(sys.modules, {"hermes_cli.config": broken}):
+            self.assertEqual(self.mod._api_key(), "", "a broken config layer must degrade, not raise")
+
+
+def _fake_config_mod(**fns) -> types.ModuleType:
+    mod = types.ModuleType("hermes_cli.config")
+    for name, fn in fns.items():
+        setattr(mod, name, fn)
+    return mod
+
+
 class _FakeResponse:
     def __init__(self, payload, status_code: int = 200):
         self._payload = payload
