@@ -128,6 +128,19 @@ def _get_json(url: str, api_key: str, timeout: float = 10.0) -> Any:
         return None
 
 
+_WEB_CALL_MODELS = ("web_search", "web_fetch", "web_extract")
+
+
+def _is_web_call_model(name: Any) -> bool:
+    """Is *name* a Kenari web call consuming the shared daily allowance?
+
+    Measured live: ``/v1/web/search`` and ``/v1/web/fetch`` both log under
+    ``web_search``, and ``web_fetch``/``web_extract`` never appear. The other
+    two names are accepted defensively so a future split can't under-count.
+    """
+    return str(name or "").strip().lower() in _WEB_CALL_MODELS
+
+
 def _next_utc_midnight_iso() -> str:
     """When the daily web-search allowance resets — 00:00 UTC, per Kenari's docs."""
     import datetime
@@ -142,12 +155,17 @@ def _web_search_usage(plan_name: str | None, api_key: str) -> dict[str, Any] | N
 
     Kenari bills web search/fetch against a per-plan DAILY CALL allowance
     counted per UTC day (``web_search_daily`` in ``/api/plans``). Usage comes
-    from ``GET /v1/usage?range=today&model=web_search`` — the same counter the
-    ``web_search`` rows appear under in the usage log.
+    from ``GET /v1/usage?range=today&model=web_search``.
+
+    Note the counter is SHARED: ``/v1/web/search`` and ``/v1/web/fetch`` each
+    consume one call from the same bucket, and Kenari logs both under the
+    ``web_search`` model name — ``web_fetch``/``web_extract`` never appear.
+    So this one number already covers page fetches; there is no second
+    counter to add.
 
     Returns ``None`` when either half is unknown: no limit on the plan (the
-    field is absent/0 → unlimited) leaves nothing meaningful to show, and an
-    unreadable counter must not render as "0 used".
+    field is absent/0 → unlimited) still returns usage, and an unreadable
+    counter must not render as "0 used".
     """
     import time
 
@@ -177,7 +195,7 @@ def _web_search_usage(plan_name: str | None, api_key: str) -> dict[str, Any] | N
     rows = payload.get("data")
     if isinstance(rows, list):
         for row in rows:
-            if isinstance(row, dict) and str(row.get("model", "")).startswith("web_search"):
+            if isinstance(row, dict) and _is_web_call_model(row.get("model")):
                 used += int(row.get("requests") or 0)
     value: dict[str, Any] = {"used": used, "resets_at": _next_utc_midnight_iso()}
     if limit is not None:

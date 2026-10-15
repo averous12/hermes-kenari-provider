@@ -327,14 +327,22 @@ error**. Verified: a forced 402 returns
 
 Every plan includes a daily **call count** for web search/fetch, counted per
 **UTC day**, and calls above it are billed to balance only when "continue
-with balance" is enabled (otherwise the call is refused). The statusbar chip
-shows it as a third ticker slot:
+with balance" is enabled (otherwise the call is refused). 
+
+**One allowance covers both.** `POST /v1/web/search` and
+`POST /v1/web/fetch` each consume one call from the *same* counter — measured
+live: one fetch `+1`, one search `+1`, both under the `web_search` model name.
+There is no separate `web_fetch`/`web_extract` usage row (both stay 0), so
+the counter is read as `?range=today&model=web_search` and already includes
+page fetches. That is why the tooltip says *search + fetch*.
+
+The statusbar chip shows it as a third ticker slot:
 
 ```
 🐦 kenari 7d 24% · 1d 4h left   →   🐦 kenari 30d 81% · 21d 3h left   →   🐦 kenari Search 8/50 · 12h left
 ```
 
-with `Web search: 8/50 calls today (42 left) • resets in 12h` in the
+with `Web search + fetch: 8/50 calls today (42 left) • resets in 12h` in the
 tooltip. The slot only appears when the plan actually caps the allowance;
 `used` clamps the remainder at zero so running over can't render `-1 left`.
 

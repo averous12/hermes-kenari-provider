@@ -1250,6 +1250,23 @@ class TestWebSearchDailyCounter(unittest.TestCase):
         self.assertEqual((reset.hour, reset.minute, reset.second), (0, 0, 0))
         self.assertLess(reset - datetime.now(timezone.utc), timedelta(days=1, seconds=5))
 
+    def test_fetch_rows_count_towards_the_same_allowance(self):
+        """Search and fetch share one daily counter, so both names must count."""
+        payload = {"data": [
+            {"model": "web_search", "requests": 4},
+            {"model": "web_fetch", "requests": 3},
+            {"model": "web_extract", "requests": 2},
+        ]}
+        with patch.object(self.api, "_get_json", lambda url, key, timeout=10.0: payload):
+            ws = self.api._web_search_usage("Indie", "kn-test")
+        self.assertEqual(ws["used"], 9, "a future search/fetch split must not under-count")
+
+    def test_is_web_call_model(self):
+        self.assertTrue(self.api._is_web_call_model("web_search"))
+        self.assertTrue(self.api._is_web_call_model("  web_fetch "))
+        self.assertFalse(self.api._is_web_call_model("deepseek-v4-1-flash"))
+        self.assertFalse(self.api._is_web_call_model(None))
+
     def test_usage_url_filters_to_today_and_web_search(self):
         seen = {}
 

@@ -218,13 +218,17 @@ if (!wsLabels[2].includes('8/50')) throw new Error('web-search slot missing the 
 if (!wsLabels[2].includes('Search')) throw new Error('web-search slot label should read "Search": ' + wsLabels[2])
 console.log('  counter 8/50 present in slot 2:', true)
 
-// The tooltip must carry the same figure with the remaining count.
+// The tooltip must carry the same figure with the remaining count, and say
+// "search + fetch" because the one allowance covers both.
 slotAtom.set(2)
 const wsTip = String(chip.render().type({ ctx })?.props?.label)
 const wsLine = wsTip.split('\n').find(l => l.includes('Web search'))
 console.log('  tooltip line:', wsLine)
 if (!wsLine || !wsLine.includes('8/50') || !wsLine.includes('42 left')) {
   throw new Error('web-search tooltip line wrong: ' + wsLine)
+}
+if (!wsLine.includes('+ fetch')) {
+  throw new Error('tooltip should say the allowance covers search + fetch: ' + wsLine)
 }
 
 // ── simulate the allowance running out ──────────────────────────────────

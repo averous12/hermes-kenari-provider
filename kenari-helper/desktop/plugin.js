@@ -373,7 +373,7 @@ export default {
         noReset: 'unknown',
         freeCacheLine: models => `Cache-free: ${models}`,
         webSearchLine: (used, limit, left, resets) =>
-          `Web search: ${used}/${limit} calls today (${left} left) • resets in ${resets}`,
+          `Web search + fetch: ${used}/${limit} calls today (${left} left) • resets in ${resets}`,
         pillFreeCache: id => `⚡ ${id} · cache-free`,
         tipEmpty: why => `Kenari usage unavailable (${why})`
       },
@@ -403,7 +403,7 @@ export default {
         noReset: 'tidak diketahui',
         freeCacheLine: models => `Cache gratis: ${models}`,
         webSearchLine: (used, limit, left, resets) =>
-          `Pencarian web: ${used}/${limit} panggilan hari ini (sisa ${left}) • reset dalam ${resets}`,
+          `Pencarian + ambil halaman: ${used}/${limit} panggilan hari ini (sisa ${left}) • reset dalam ${resets}`,
         pillFreeCache: id => `⚡ ${id} · cache gratis`,
         tipEmpty: why => `Pemakaian Kenari tidak tersedia (${why})`
       }
