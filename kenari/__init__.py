@@ -193,6 +193,20 @@ def _sort_models_by_tier(models: list[str], free_cache: set[str]) -> list[str]:
     return sorted(models, key=rank)
 
 
+def _is_free_route(model_id: str) -> bool:
+    """Is *model_id* a ``:free`` route (whole request costs Rp 0)?
+
+    Free routes are exempt from the plan-ownership filter: any key may call
+    them and they never touch plan quota or balance, so plan entitlement is
+    irrelevant to them.
+    """
+    as_str = str(model_id or "").strip()
+    if not as_str:
+        return False
+    base = as_str.split(":", 1)[0]
+    return as_str.endswith(":free") or base.endswith(":free")
+
+
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     """GET *url* as JSON, or ``None`` on any failure (never raises).
 
@@ -1476,11 +1490,20 @@ class KenariProfile(ProviderProfile):
         if _plan_only_enabled():
             covered, plan_name = lists["covered"], str(lists["plan"])
             if covered is not None:
-                kept = [m for m in models if m in covered]
+                # `:free` routes are exempt: they cost Rp 0 and any key may
+                # call them, so plan entitlement has nothing to say about
+                # them. Dropping them would hide the only genuinely free
+                # models from a plan user — the opposite of the toggle's
+                # intent, which is to hide models the plan BILLS elsewhere.
+                kept = [m for m in models if m in covered or _is_free_route(m)]
                 if kept:
                     logger.debug(
-                        "kenari: plan %s covers %d of %d listed models",
-                        plan_name, len(kept), len(models),
+                        "kenari: plan %s covers %d of %d listed models "
+                        "(%d free routes kept regardless)",
+                        plan_name,
+                        sum(1 for m in kept if m in covered),
+                        len(models),
+                        sum(1 for m in kept if _is_free_route(m)),
                     )
                     models = kept
                 else:

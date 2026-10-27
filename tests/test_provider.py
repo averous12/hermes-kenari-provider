@@ -857,6 +857,44 @@ class TestPlanOnlyFiltering(unittest.TestCase):
         # key allows 3, plan Indie covers 2
         self.assertEqual(models, ["hy3:free", "step-3-7-flash:free"])
 
+    def test_on_never_hides_free_routes_the_plan_does_not_cover(self):
+        """A `:free` route costs Rp 0, so plan entitlement can't exclude it.
+
+        Real plans list 30-odd `scope_models` and free routes are not
+        guaranteed to be among them; filtering them out hid the only
+        genuinely free models from exactly the users paying for a plan.
+        """
+        plans = [{"id": "p", "name": "Indie", "scope_models": ["gpt-oss-20b"]}]
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie", plans=plans)):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertIn("hy3:free", models, "uncovered free route must survive")
+        self.assertIn("step-3-7-flash:free", models, "uncovered free route must survive")
+        self.assertIn("gpt-oss-20b", models, "covered model must survive")
+        self.assertNotIn("step-3-7-flash", models, "uncovered PAID route must still be filtered")
+
+    def test_free_route_detection(self):
+        for yes in ("hy3:free", "step-3-7-flash:free", "mimo-v2-6-flash:free"):
+            self.assertTrue(self.module._is_free_route(yes), yes)
+        for no in ("step-3-7-flash", "gpt-oss-20b", "hy3", "", None):
+            self.assertFalse(self.module._is_free_route(no), str(no))
+
+    def test_plan_only_with_empty_scope_fails_open(self):
+        """An empty `scope_models` is "no data", not "covers nothing".
+
+        Failing open is the safe direction: a plan whose entitlement list
+        failed to parse must not empty the picker.
+        """
+        plans = [{"id": "p", "name": "Indie", "scope_models": []}]
+        mod = sys.modules["hermes_cli.urllib_security"]
+        with patch.object(mod, "open_credentialed_url", self._opener("Indie", plans=plans)):
+            with patch.dict(os.environ, {"KENARI_PLAN_ONLY": "1"}):
+                models = self.profile.fetch_models(api_key="kn-full")
+        self.assertEqual(
+            sorted(models), ["gpt-oss-20b", "hy3:free", "step-3-7-flash:free"],
+            "empty scope must fail open, keeping both free and paid routes")
+
     def test_off_shows_key_scope(self):
         mod = sys.modules["hermes_cli.urllib_security"]
         with patch.object(mod, "open_credentialed_url", self._opener("Indie")):

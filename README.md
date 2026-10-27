@@ -191,7 +191,15 @@ in `config.yaml` → off.
 | Value | Picker shows |
 |---|---|
 | unset / off (default) | every tool-capable chat model your **key** can call |
-| on | those, narrowed to the **active plan's** `scope_models` |
+| on | those, narrowed to the **active plan's** `scope_models`, **plus every `:free` route** |
+
+**`:free` routes are exempt.** A `:free` route costs Rp 0 and any key may
+call it, so plan entitlement has nothing to say about it — filtering it out
+would hide the only genuinely free models from the people paying for a plan.
+This is not theoretical: none of Indie's 41 `scope_models` entries are
+`:free` routes, so the naive filter hid **all 16** free routes on the live
+account. The exemption covers `base:free` (whole request free), not
+cache-free bases — those still cost tokens, so they stay plan-gated.
 
 Live example on an Indie plan: 70 key-callable models → 34 plan-covered;
 the 36 dropped include `claude-opus-5`, `gpt-5-6-sol`, and several
