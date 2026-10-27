@@ -1,0 +1,10 @@
+name: kenari-image
+version: 0.2.0
+description: >-
+  Kenari.id image generation backend — text-to-image and image editing on
+  /v1/images/generations and /v1/images/edits, riding the KENARI_API_KEY the
+  model provider already uses. Includes 3 `:free` image routes that cost Rp 0.
+author: avero
+kind: backend
+requires_env:
+  - KENARI_API_KEY

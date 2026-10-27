@@ -11,7 +11,8 @@ in Rupiah from the live catalog, and surfaces wallet/plan/usage via
 `hermes usage`. It ships with a companion desktop plugin
 (`kenari-helper/`) that shows plan quota in the statusbar, and a
 web-search backend (`kenari-web/`) that serves `web_search` /
-`web_extract` from the same key. It touches no Hermes core files —
+`web_extract` from the same key, and an image-generation backend
+(`kenari-image/`) for `image_generate`. It touches no Hermes core files —
 discovery, credential resolution, `hermes doctor`, and the `--provider`
 flag all auto-wire from the provider registry.
 
@@ -80,6 +81,7 @@ This repo ships **two independent plugins**. Install either or both.
 | repo root + `kenari/` | The model provider (`kind: model-provider`) — inference, picker, pricing, `hermes usage` | `~/.hermes/plugins/kenari` |
 | `kenari-helper/` | The desktop statusbar chip (dashboard backend + `desktop/plugin.js`) | `~/.hermes/plugins/kenari-helper` |
 | `kenari-web/` | Web-search backend (`web_search` / `web_extract`) | `~/.hermes/plugins/web/kenari` |
+| `kenari-image/` | Image-generation backend (`image_generate`) | `~/.hermes/plugins/image_gen/kenari` |
 
 They are separate because Hermes loads them through different registries:
 model providers load from `plugins/model-providers/` (or the flat
@@ -366,6 +368,54 @@ hermes plugins enable kenari-web
 
 Verify with `hermes tools` (Kenari appears as a web-search backend) and
 `hermes plugins list`.
+
+## Image generation (`kenari-image/`)
+
+A backend for Hermes' `image_generate` tool, serving both directions from
+Kenari's OpenAI-compatible image surface with the **same** `KENARI_API_KEY`:
+
+| Operation | Endpoint | Transport |
+|---|---|---|
+| text-to-image | `POST /v1/images/generations` | JSON |
+| edit / reference | `POST /v1/images/edits` | `multipart/form-data`, up to 16 files |
+
+20 image-output models are listed, discovered live from `/v1/models`
+(`modalities.output` contains `image`); a curated list stands in when the
+catalog is unreachable. **Three are `:free` routes** — `agnes-image-2-{0,1,5}-flash:free`
+— so image generation costs nothing on Indie.
+
+### Setup
+
+```bash
+cp -r kenari-image ~/.hermes/plugins/image_gen/kenari
+hermes plugins enable kenari-image
+hermes config set image_gen.provider kenari    # required: unset falls through to FAL
+```
+
+`image_gen.provider` is **not** auto-selected. Hermes' `image_generate`
+dispatch consults it explicitly; with it unset, the tool reports "FAL_KEY is
+not set" even though this backend is registered and active.
+
+Model resolution: `KENARI_IMAGE_MODEL` → `image_gen.kenari.model` →
+`image_gen.model` → `agnes-image-2-5-flash:free`.
+
+### Two response shapes (both handled)
+
+Measured live, they differ — worth knowing before debugging a blank image:
+
+- `generations` → `data[0].b64_json` (base64 PNG).
+- `edits` → `data[0].b64_json` is **`""`** and the image arrives as
+  `data[0].url` holding a `data:image/png;base64,...` URI (>1 MB). It must be
+  decoded locally; handing that URI to an HTTP client fails with
+  "URL too long".
+
+Both are normalised into Hermes' image cache
+(`$HERMES_HOME/cache/generated/images/`).
+
+Sizes are requests, not promises: Kenari snaps to each model's ratio
+(`1536x1024` came back as `1248x832` on `agnes-image-2-5`). Verified live:
+text-to-image on a free route, then an edit of that same file with the
+composition preserved.
 
 ## Model picker rows (optional, needs a core patch)
 
