@@ -50,13 +50,29 @@ USER_AGENT = "hermes-kenari-plugin"
 TIMEOUT = 180.0
 MAX_REFERENCE_IMAGES = 16
 
-# Kenari accepts OpenAI's three sizes and snaps to the model's own ratio
-# (1536x1024 came back as 1248x832 on agnes-image-2-5), so these are requests,
-# not promises.
+# Kenari snaps the requested size to a discrete bucket set (measured on all
+# three agnes routes — identical across them):
+#
+#   1:1   1024x1024, 2048x2048
+#   3:2   1248x832   /  832x1248
+#   16:9  1312x736   /  736x1312
+#   4:3   1152x864   /  864x1152
+#
+# Anything off-bucket is rounded to the nearest (512x512 → 1024x1024,
+# 1792x1024 → 1312x736), and unparseable sizes are rejected with HTTP 400.
+# We therefore REQUEST the exact buckets so what is asked for is what comes
+# back; other backends get the same [OI]-ish values and snap as they see fit.
 SIZES = {
-    "landscape": "1536x1024",
+    "landscape": "1248x832",
     "square": "1024x1024",
-    "portrait": "1024x1536",
+    "portrait": "832x1248",
+}
+
+# Larger 1:1 tier, offered explicitly because the model honors it.
+SIZES_LARGE = {
+    "landscape": "1312x736",
+    "square": "2048x2048",
+    "portrait": "736x1312",
 }
 
 DEFAULT_MODEL = "agnes-image-2-5-flash:free"
@@ -153,6 +169,38 @@ def _image_config() -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("kenari-image: config unavailable: %s", exc)
         return {}
+
+
+def _image_dimensions(path: str) -> Optional[tuple[int, int]]:
+    """``(width, height)`` read from the PNG/JPEG header, or ``None``.
+
+    Kenari snaps sizes to its own buckets, so the requested size is not what
+    the user got. Reporting the request would be a lie in the tool result.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+                return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if head[:2] == b"\xff\xd8":  # JPEG: walk the segment markers
+                fh.seek(2)
+                while True:
+                    marker = fh.read(2)
+                    if len(marker) < 2 or marker[0] != 0xFF:
+                        return None
+                    if marker[1] in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                                     0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                        fh.read(3)
+                        h = int.from_bytes(fh.read(2), "big")
+                        w = int.from_bytes(fh.read(2), "big")
+                        return w, h
+                    length = int.from_bytes(fh.read(2), "big")
+                    if length < 2:
+                        return None
+                    fh.seek(length - 2, os.SEEK_CUR)
+    except Exception:  # noqa: BLE001 — metadata only, never fail the generation
+        return None
+    return None
 
 
 def _resolve_model() -> str:
@@ -437,7 +485,13 @@ class KenariImageGenProvider(ImageGenProvider):
             return _fail("Kenari returned no image data.", "empty_response",
                          model=model, aspect_ratio=aspect)
 
-        extra: Dict[str, Any] = {"size": size}
+        extra: Dict[str, Any] = {"size": size, "requested_size": size}
+        dims = _image_dimensions(image) if os.path.isfile(image) else None
+        if dims:
+            extra["size"] = f"{dims[0]}x{dims[1]}"
+            extra["width"], extra["height"] = dims
+            if extra["size"] != size:
+                logger.debug("kenari-image: requested %s, got %s", size, extra["size"])
         revised = first.get("revised_prompt") if isinstance(first, dict) else None
         if revised:
             extra["revised_prompt"] = revised

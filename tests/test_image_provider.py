@@ -328,11 +328,17 @@ class TestModelResolution(Base):
         with patch.dict("os.environ", {"KENARI_IMAGE_MODEL": "gpt-image-2"}):
             self.assertEqual(self.mod._resolve_model(), "gpt-image-2")
 
-    def test_sizes_are_openai_shaped(self):
+    def test_sizes_request_exact_buckets(self):
+        """Measured buckets, so the request matches the response."""
         self.assertEqual(self.mod._size_for("square"), "1024x1024")
-        self.assertEqual(self.mod._size_for("landscape"), "1536x1024")
-        self.assertEqual(self.mod._size_for("portrait"), "1024x1536")
+        self.assertEqual(self.mod._size_for("landscape"), "1248x832")
+        self.assertEqual(self.mod._size_for("portrait"), "832x1248")
         self.assertEqual(self.mod._size_for("nonsense"), "1024x1024")
+
+    def test_large_tier_uses_honored_buckets(self):
+        self.assertEqual(self.mod.SIZES_LARGE["square"], "2048x2048")
+        self.assertEqual(self.mod.SIZES_LARGE["landscape"], "1312x736")
+        self.assertEqual(self.mod.SIZES_LARGE["portrait"], "736x1312")
 
 
 # ── generation ─────────────────────────────────────────────────────────────
@@ -430,6 +436,85 @@ class TestGenerate(Base):
 
 
 # ── HTTP error mapping ─────────────────────────────────────────────────────
+
+
+class TestDimensionReporting(Base):
+    """The tool result must report the size that came BACK, not the request."""
+
+    @staticmethod
+    def _png(w, h):
+        import struct
+        ihdr = struct.pack(">II", w, h) + b"\x08\x02\x00\x00\x00"
+        chunk = b"IHDR" + ihdr
+        return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", len(ihdr)) + chunk
+                + struct.pack(">I", 0))
+
+    def test_reports_actual_dimensions_not_requested(self):
+        raw = self._png(1248, 832)
+        saved = {"path": None}
+
+        def fake_save(b64, *, prefix="image", extension="png"):
+            p = REPO / "tests" / "_tmp_dim.png"
+            p.write_bytes(raw)
+            saved["path"] = p
+            return p
+
+        with patch.object(self.mod, "save_b64_image", fake_save):
+            HTTPX.__state__["post_response"] = _Resp(200, {"data": [{"b64_json": "x"}]})
+            out = self.mod.KenariImageGenProvider().generate("a canary", "landscape")
+        try:
+            self.assertTrue(out["success"])
+            self.assertEqual(out["size"], "1248x832")
+            self.assertEqual(out["requested_size"], "1248x832")
+            self.assertEqual((out["width"], out["height"]), (1248, 832))
+        finally:
+            if saved["path"]:
+                saved["path"].unlink(missing_ok=True)
+
+    def test_snap_is_visible_in_the_result(self):
+        """Request a bucket we did not ask for; the result must show reality."""
+        raw = self._png(1312, 736)
+        saved = {"path": None}
+
+        def fake_save(b64, *, prefix="image", extension="png"):
+            p = REPO / "tests" / "_tmp_dim2.png"
+            p.write_bytes(raw)
+            saved["path"] = p
+            return p
+
+        with patch.object(self.mod, "save_b64_image", fake_save):
+            HTTPX.__state__["post_response"] = _Resp(200, {"data": [{"b64_json": "x"}]})
+            out = self.mod.KenariImageGenProvider().generate("a canary", "square")
+        try:
+            self.assertEqual(out["size"], "1312x736", "actual wins over the request")
+            self.assertEqual(out["requested_size"], "1024x1024")
+        finally:
+            if saved["path"]:
+                saved["path"].unlink(missing_ok=True)
+
+    def test_unreadable_file_falls_back_to_requested(self):
+        HTTPX.__state__["post_response"] = _Resp(200, {"data": [{"url": "https://cdn.example/x.png"}]})
+        out = self.mod.KenariImageGenProvider().generate("a canary", "portrait")
+        self.assertTrue(out["success"])
+        self.assertEqual(out["size"], "832x1248", "no local file -> requested size")
+
+    def test_dimension_reader_handles_png_and_garbage(self):
+        p = REPO / "tests" / "_tmp_hdr.png"
+        p.write_bytes(self._png(640, 480))
+        try:
+            self.assertEqual(self.mod._image_dimensions(str(p)), (640, 480))
+        finally:
+            p.unlink(missing_ok=True)
+
+        q = REPO / "tests" / "_tmp_hdr.bin"
+        q.write_bytes(b"not an image at all")
+        try:
+            self.assertIsNone(self.mod._image_dimensions(str(q)))
+        finally:
+            q.unlink(missing_ok=True)
+
+    def test_dimension_reader_survives_missing_file(self):
+        self.assertIsNone(self.mod._image_dimensions(str(REPO / "tests" / "_nope.png")))
 
 
 class TestErrorMapping(Base):

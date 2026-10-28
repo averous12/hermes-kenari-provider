@@ -412,10 +412,32 @@ Measured live, they differ — worth knowing before debugging a blank image:
 Both are normalised into Hermes' image cache
 (`$HERMES_HOME/cache/generated/images/`).
 
-Sizes are requests, not promises: Kenari snaps to each model's ratio
-(`1536x1024` came back as `1248x832` on `agnes-image-2-5`). Verified live:
-text-to-image on a free route, then an edit of that same file with the
-composition preserved.
+### Sizes: not 1024x1024-only
+
+agnes is **not** square-only — it does landscape and portrait, but it snaps
+the requested `size` to a **discrete bucket set**, identical across all three
+free routes:
+
+| aspect | buckets |
+|---|---|
+| 1:1 | `1024x1024`, `2048x2048` |
+| 3:2 | `1248x832` / `832x1248` |
+| 16:9 | `1312x736` / `736x1312` |
+| 4:3 | `1152x864` / `864x1152` |
+
+Off-bucket values round to the nearest (`512x512` → `1024x1024`,
+`1792x1024` → `1312x736`, `2560x1440` → `1312x736`); a non-numeric size is
+rejected with HTTP 400. This plugin therefore *requests* exact buckets
+(`1248x832` / `832x1248`), so request and result agree.
+
+The tool result reports **actual** dimensions (`size`, `width`, `height`)
+read from the returned file, with `requested_size` alongside — because a
+backend that snaps must not have its request echoed back as if it were the
+result. Verified live: landscape → `1248x832`, portrait → `832x1248`,
+square → `1024x1024`, each matching its request.
+
+Text-to-image on a free route, then an edit of that same file with the
+composition preserved, were both verified live.
 
 ## Model picker rows (optional, needs a core patch)
 
